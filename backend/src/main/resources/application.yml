@@ -1,0 +1,81 @@
+spring:
+  application:
+    name: codequest-backend
+
+  datasource:
+    url: ${DATABASE_URL:jdbc:postgresql://127.0.0.1:5433/codequest}
+    username: ${DATABASE_USERNAME:codequest}
+    password: ${DATABASE_PASSWORD:codequest}
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 30000
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    open-in-view: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: true
+
+  flyway:
+    enabled: ${FLYWAY_ENABLED:false}
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+
+  data:
+    redis:
+      host: ${REDIS_HOST:127.0.0.1}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      timeout: 2000ms
+
+  ai:
+    openai:
+      base-url: ${AI_BASE_URL:http://localhost:11434}
+      api-key: ${AI_API_KEY:ollama}
+      chat:
+        options:
+          model: ${AI_MODEL:llama3.2:3b}
+          temperature: 0.7
+          max-tokens: 2048
+      connect-timeout: 10000
+      read-timeout: 180000
+
+server:
+  port: ${PORT:9090}
+  error:
+    include-message: never
+    include-stacktrace: never
+
+codequest:
+  cors:
+    allowed-origins: ${CORS_ORIGINS:http://localhost:5173,http://localhost:3000}
+  session:
+    ttl-minutes: 120
+  jwt:
+    # CHANGE THIS IN PRODUCTION via the JWT_SECRET env var. Must be at least 32 bytes (256 bits).
+    secret: ${JWT_SECRET:codequest-dev-secret-change-me-in-production-please-32bytes-min}
+    # Short-lived access token — clients refresh via /api/v1/auth/refresh.
+    access-ttl-seconds: ${JWT_ACCESS_TTL_SECONDS:900}     # 15 min
+    refresh-ttl-seconds: ${JWT_REFRESH_TTL_SECONDS:2592000} # 30 days
+  tutor:
+    retention-days: ${TUTOR_RETENTION_DAYS:90}
+  ratelimit:
+    # Max attempts per identifier per window before a 429 is returned.
+    login-max-attempts: ${RATELIMIT_LOGIN_MAX:8}
+    login-window-seconds: ${RATELIMIT_LOGIN_WINDOW_SECONDS:300}
+  xp:
+    base-reward: 100
+    hint-penalty: 20
+    speed-bonus-seconds: 60
+  engagement:
+    max-hearts: ${MAX_HEARTS:5}
+    heart-refill-minutes: ${HEART_REFILL_MINUTES:30}
+    daily-goal-target: ${DAILY_GOAL_TARGET:3}
+    daily-goal-bonus-xp: ${DAILY_GOAL_BONUS_XP:150}
+    streak-bonus-per-day: ${STREAK_BONUS_PER_DAY:10}
+    max-streak-bonus-xp: ${MAX_STREAK_BONUS_XP:50}

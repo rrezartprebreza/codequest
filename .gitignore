@@ -1,0 +1,19 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+*.iml
+.vscode/
+*.swp
+
+# Environment files — never commit secrets
+.env
+backend/.env
+frontend/.env
+
+# Build output and dependencies
+frontend/node_modules/
+frontend/dist/
+backend/target/

@@ -1,0 +1,17 @@
+# Build output
+target/
+
+# Maven wrapper dist (downloaded on demand)
+.mvn/wrapper/maven-wrapper.jar
+
+# IDE
+.idea/
+*.iml
+
+# Environment
+.env
+
+# Logs
+*.log
+logs/
+

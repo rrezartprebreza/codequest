@@ -1,0 +1,181 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* { box-sizing: border-box; }
+
+:root {
+  color-scheme: dark;
+
+  /* ── Backgrounds (4 calm steps) ── */
+  --bg-0: #0A0C10;
+  --bg-1: #11141B;
+  --bg-2: #161A22;
+  --bg-3: #1C212B;
+
+  /* ── Borders ── */
+  --border-subtle: rgba(255,255,255,0.06);
+  --border-soft:   rgba(255,255,255,0.10);
+  --border-strong: rgba(255,255,255,0.16);
+
+  /* ── Text ── */
+  --text-primary:   #EAEEF5;
+  --text-secondary: #8B95A7;
+  --text-tertiary:  #5A6478;
+
+  /* ── Accent: mint (kept to match working components) ── */
+  --accent:        #12E8B0;
+  --accent-dim:    #0FC090;
+  --accent-deep:   #052017;
+  --accent-soft:   rgba(18, 232, 176, 0.10);
+
+  /* ── Semantic ── */
+  --success: #12E8B0;
+  --warning: #F5A623;
+  --danger:  #FF5C72;
+  --info:    #4FBEFF;
+
+  --warning-soft: rgba(245, 166, 35, 0.10);
+  --danger-soft:  rgba(255, 92, 114, 0.10);
+  --info-soft:    rgba(79, 190, 255, 0.10);
+
+  /* ── Shadows (subtle) ── */
+  --shadow-sm: 0 1px 2px rgba(0,0,0,0.20);
+  --shadow-md: 0 4px 12px rgba(0,0,0,0.30);
+  --shadow-lg: 0 12px 32px rgba(0,0,0,0.40);
+
+  /* ── Radius ── */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
+
+  /* ── Legacy aliases (kept so old components still work) ── */
+  --app-bg: var(--bg-0);
+  --app-text: var(--text-primary);
+  --app-muted: var(--text-secondary);
+  --app-panel: var(--bg-1);
+  --app-card: var(--bg-2);
+  --app-card-strong: var(--bg-3);
+  --app-border: var(--border-subtle);
+  --app-accent: var(--accent);
+  --app-accent-strong: var(--accent-dim);
+  --app-accent-alt: var(--info);
+  --app-warm: var(--warning);
+  --app-shadow: var(--shadow-md);
+  --app-shadow-soft: var(--shadow-sm);
+  --app-shadow-glow: var(--shadow-md);
+}
+
+@layer utilities {
+  .bg-app-bg          { background-color: var(--bg-0); }
+  .bg-app-panel       { background-color: var(--bg-1); }
+  .bg-app-card        { background-color: var(--bg-2); }
+  .bg-app-card-strong { background-color: var(--bg-3); }
+  .border-app-border  { border-color: var(--border-subtle); }
+  .text-app-text      { color: var(--text-primary); }
+  .text-app-muted     { color: var(--text-secondary); }
+  .text-app-accent    { color: var(--accent); }
+  .bg-app-accent      { background-color: var(--accent); }
+  .text-app-warm      { color: var(--warning); }
+
+  .surface-panel {
+    background: var(--bg-1);
+    border: 1px solid var(--border-subtle);
+  }
+  .surface-card {
+    background: var(--bg-2);
+    border: 1px solid var(--border-subtle);
+  }
+  .surface-inset {
+    background: var(--bg-0);
+    border: 1px solid var(--border-subtle);
+  }
+
+  .eyebrow {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.16em;
+    color: var(--text-tertiary);
+  }
+
+  .focus-ring {
+    outline: none;
+    transition: box-shadow 120ms ease, border-color 120ms ease;
+  }
+  .focus-ring:focus-visible {
+    box-shadow: 0 0 0 2px var(--accent-soft);
+    border-color: var(--accent);
+  }
+
+  .tag {
+    display: inline-flex; align-items: center; gap: 5px;
+    border-radius: 999px;
+    padding: 3px 10px;
+    font-size: 11px;
+    font-weight: 500;
+    border: 1px solid var(--border-subtle);
+    background: var(--bg-2);
+    color: var(--text-secondary);
+  }
+}
+
+html, body, #root { height: 100%; }
+
+body {
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  background: var(--bg-0);
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  letter-spacing: -0.01em;
+  min-height: 100vh;
+}
+
+code, pre, .mono {
+  font-family: 'JetBrains Mono', 'IBM Plex Mono', monospace;
+}
+
+::selection {
+  background: var(--accent-soft);
+  color: var(--text-primary);
+}
+
+::-webkit-scrollbar         { width: 8px; height: 8px; }
+::-webkit-scrollbar-track   { background: transparent; }
+::-webkit-scrollbar-thumb   { background: rgba(255,255,255,0.06); border-radius: 99px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.12); }
+
+.monaco-editor { border-radius: 0 !important; }
+
+button, input, textarea { font: inherit; }
+button { box-shadow: none; outline: none; }
+
+@keyframes slide-up {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes pulse-soft {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.55; }
+}
+@keyframes shimmer {
+  from { background-position: -200% center; }
+  to   { background-position: 200% center; }
+}
+
+.animate-slide-up   { animation: slide-up 240ms ease forwards; }
+.animate-pulse-soft { animation: pulse-soft 1.8s ease-in-out infinite; }
+
+.shimmer {
+  background: linear-gradient(90deg,
+    rgba(255,255,255,0.03) 0%,
+    rgba(255,255,255,0.07) 40%,
+    rgba(255,255,255,0.03) 80%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.8s linear infinite;
+}
