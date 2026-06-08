@@ -21,6 +21,10 @@ Built on Spring Boot 3 and Spring AI, with Groq's free LLM tier as the inference
 
 ## ✅ What Exists Today
 
+- 📚 **Learning-path lesson shell** with tutorial video, video info, quiz, and AI coach panel
+- 🔒 **Locked progression flow** — learners cannot open locked nodes or start practice until the active lesson is completed
+- 🧪 **Tutorial quiz gate** — learners must mark the tutorial watched and pass the quiz before practice unlocks
+- 🧠 **Contextual AI coach** that explains the selected tutorial and asks Socratic understanding checks
 - 🐛 **AI-generated bug-hunt challenges** across any programming language
 - 💬 **Real-time streaming AI tutor** with full conversation memory and Socratic method
 - 🏆 **XP system with level progression** — from Beginner to Master
@@ -37,7 +41,7 @@ Built on Spring Boot 3 and Spring AI, with Groq's free LLM tier as the inference
 
 | Feature | Description |
 |---|---|
-| 📚 **Quest system** | Structured learning paths from beginner to senior across multiple languages |
+| 📚 **Richer quest curriculum** | More curated lessons, quizzes, and branching nodes across multiple languages |
 | ⚔️ **Code Battle mode** | Two students compete live on the same challenge via WebSocket |
 | 👾 **AI Villain boss fights** | End-of-quest challenges where the AI plays a broken production system |
 | 🌍 **Global leaderboard** | Streak tracking and worldwide rankings |
@@ -61,6 +65,22 @@ These are concrete additions that fit the current product instead of generic "AI
 | 👥 **Pair-debug mode** | Two learners solve the same bug together with shared chat and editor state |
 | 📊 **Coach dashboard** | Show time-to-fix, hint usage, repeated bug categories, and XP trends for mentors or lecturers |
 | 🧾 **Portfolio of fixes** | Save solved bugs and model explanations into a learner-facing history of debugging wins |
+
+---
+
+## 🧭 Learning Path Flow
+
+The main learner experience is now path-first:
+
+1. Select the active unlocked node from the horizontal path strip.
+2. Watch the embedded tutorial video.
+3. Read the AI-generated short explanation and key lesson ideas.
+4. Mark the tutorial as watched.
+5. Pass the tutorial quiz.
+6. Use the AI coach for short explanations, Socratic checks, or extra examples.
+7. Start a practice mission generated from the selected tutorial focus.
+
+Locked nodes stay visible for motivation, but cannot be opened until the active lesson is completed.
 
 ---
 
