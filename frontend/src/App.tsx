@@ -4,6 +4,7 @@ import toast from 'react-hot-toast';
 import {
   BookOpen,
   Brain,
+  ArrowUpRight,
   CheckCircle2,
   Code2,
   Eye,
@@ -13,15 +14,20 @@ import {
   Heart,
   History,
   LayoutDashboard,
+  Lock,
   LogOut,
+  PlayCircle,
   RefreshCw,
+  Route,
   Search,
   Settings as SettingsIcon,
   Shield,
   Sparkles,
+  Star,
   Target,
   Trophy,
   X,
+  Youtube,
 } from 'lucide-react';
 import {
   AssignmentResponse,
@@ -46,7 +52,9 @@ import {
   PlayerLevel,
   PracticeMode,
   PrivacySettings,
+  ProgressionNode,
   ProgressionState,
+  ProgressStatus,
   QuestBoard,
   logout as serverLogout,
   setAuthToken,
@@ -76,9 +84,26 @@ import {
   suggestFocusTopic,
   updateLearningState,
 } from './services/learningEngine';
+import {
+  buildYoutubeEmbedUrl,
+  buildNodeLearningContent,
+  buildYoutubeSearchUrl,
+} from './services/pathContent';
+import type { VideoResource } from './services/pathContent';
+import {
+  completeNodeLearningSession,
+  getDueReviewCards,
+  getNodePathProgress,
+  loadPathProgressState,
+  markVideoWatched,
+  PathProgressState,
+  savePathProgressState,
+  scoreExercise,
+} from './services/pathProgress';
 
 type AppPhase = 'booting' | 'onboarding' | 'loading' | 'ready' | 'error';
 type SideDrawer = 'dashboard' | 'plan' | 'history' | 'portfolio' | 'league' | 'classroom' | 'settings' | null;
+type Workspace = 'path' | 'practice';
 
 const FOCUS_CHIPS = ['Loops', 'Recursion', 'Arrays', 'SQL', 'Async'];
 
@@ -117,6 +142,7 @@ export default function App() {
   const [leaderboard, setLeaderboard] = useState<LeaderboardResponse | null>(null);
   const [assignments, setAssignments] = useState<AssignmentResponse[]>([]);
   const [drawer, setDrawer] = useState<SideDrawer>(null);
+  const [workspace, setWorkspace] = useState<Workspace>('path');
 
   const requestSerialRef = useRef(0);
   const humanLanguage = player?.preferredLanguage ?? navigator.language.split('-')[0] ?? 'en';
@@ -248,6 +274,7 @@ export default function App() {
           setChallenge(restored);
           setChallengeReason(buildChallengeReason(loadedLearning, restored));
           setPhase('ready');
+          setWorkspace('path');
           void setSessionChallenge(
             loadedTutorSessionId,
             restored.id,
@@ -263,12 +290,8 @@ export default function App() {
           return;
         }
 
-        await generateAndBindChallenge(
-          loadedPlayer,
-          loadedPlayer.preferredLanguage ?? humanLanguage,
-          loadedLearning,
-          loadedProgression,
-        );
+        setPhase('ready');
+        setWorkspace('path');
       } catch (error) {
         localStorage.removeItem('codequest_player_id');
         if (!active) return;
@@ -308,13 +331,8 @@ export default function App() {
       setLearningState(loadedLearning);
       setAssignments(loadedAssignments);
       if (placementFocus) setFocusTopic(placementFocus);
-      await generateAndBindChallenge(
-        loadedPlayer,
-        loadedPlayer.preferredLanguage ?? humanLanguage,
-        loadedLearning,
-        loadedProgression,
-        placementFocus,
-      );
+      setPhase('ready');
+      setWorkspace('path');
     } catch (error) {
       setPhaseError(getApiErrorMessage(error, 'Failed to complete onboarding.'));
       setPhase('onboarding');
@@ -326,6 +344,7 @@ export default function App() {
     if (player) {
       sessionStorage.removeItem(`codequest_challenge_${player.id}`);
       localStorage.removeItem(`codequest_learning_${player.id}`);
+      localStorage.removeItem(`codequest_path_progress_${player.id}`);
     }
     localStorage.removeItem('codequest_player_id');
     // Fire-and-forget: revoke the refresh-token family on the server.
@@ -341,6 +360,7 @@ export default function App() {
     setLeaderboard(null);
     setAssignments([]);
     setLearningState(emptyLearningState());
+    setWorkspace('path');
     setPhase('onboarding');
     setPhaseError('');
   };
@@ -375,12 +395,11 @@ export default function App() {
       setEngagement(refreshedEngagement);
       setQuests(refreshedQuests);
       setLeaderboard(refreshedLeaderboard);
-      await generateAndBindChallenge(
-        refreshedPlayer,
-        refreshedPlayer.preferredLanguage ?? humanLanguage,
-        undefined,
-        updatedProgression ?? progression,
-      );
+      setChallenge(null);
+      setChallengeReason('');
+      setWorkspace('path');
+      setPhase('ready');
+      toast.success('Node practice complete. Continue from the learning path.');
     } catch (error) {
       setPhaseError(getApiErrorMessage(error, 'Failed to refresh your progress.'));
       setPhase('error');
@@ -433,6 +452,7 @@ export default function App() {
     }
     setFocusTopic(plan.topic);
     toast.success(plan.reason);
+    setWorkspace('practice');
     void generateAndBindChallenge(player, player.preferredLanguage ?? humanLanguage, learningState, progression, plan.topic);
   };
 
@@ -472,61 +492,107 @@ export default function App() {
             engagement={engagement}
             challenge={challenge}
             loadingChallenge={loadingChallenge}
-            onNewMission={() => void generateAndBindChallenge(player)}
-            onOpenDashboard={() => setDrawer('dashboard')}
-            onOpenLeague={() => setDrawer('league')}
-            onOpenHistory={() => setDrawer('history')}
-            onOpenPortfolio={() => setDrawer('portfolio')}
-            onOpenClassroom={() => setDrawer('classroom')}
+            workspace={workspace}
+            onNewMission={() => {
+              if (workspace === 'path') {
+                setWorkspace('path');
+                toast('Watch a tutorial and complete the quick check before practice.');
+                return;
+              }
+              setWorkspace('practice');
+              void generateAndBindChallenge(player);
+            }}
+            onOpenPath={() => setWorkspace('path')}
             onOpenSettings={() => setDrawer('settings')}
             onReset={handleReset}
           />
 
-          <main className="flex flex-1 gap-4 overflow-hidden p-4">
-            {/* Challenge panel — fills remaining space */}
-            <section className="flex flex-1 flex-col overflow-hidden rounded-2xl border border-app-border bg-bg-1 shadow-sm">
-              {phase === 'error' && (
-                <div className="mx-4 mt-4 rounded-xl border border-danger/30 bg-danger/10 px-4 py-3 text-sm text-danger">
-                  {phaseError || 'Something went wrong.'}
-                  <button
-                    onClick={() => void generateAndBindChallenge(player)}
-                    className="ml-3 underline underline-offset-2"
-                  >
-                    Retry
-                  </button>
-                </div>
-              )}
-              <div className="flex-1 overflow-y-auto p-6">
-                {loadingChallenge && !challenge ? (
-                  <LoadingState />
-                ) : challenge ? (
-                  <ChallengePanel
-                    challenge={challenge}
-                    playerId={player.id}
-                    humanLanguage={humanLanguage}
-                    engagement={engagement}
-                    challengeReason={challengeReason}
-                    onEvaluated={handleEvaluated}
-                    onEngagementChange={setEngagement}
-                    onSubmissionResolved={handleSubmissionResolved}
-                    onAskTutor={handleAskTutor}
-                    onComplete={handleChallengeComplete}
-                  />
-                ) : (
-                  <EmptyState onStart={() => void generateAndBindChallenge(player)} />
-                )}
-              </div>
-            </section>
+          {workspace === 'path' && progression && (
+            <main className="flex-1 overflow-y-auto p-3 lg:overflow-hidden">
+              <section className="mx-auto flex min-h-full max-w-[1500px] flex-col rounded-2xl border border-app-border bg-bg-1 p-4 shadow-sm lg:h-full lg:min-h-0 lg:overflow-hidden">
+                <LearningPathContent
+                  progression={progression}
+                  player={player}
+                  learningState={learningState}
+                  tutorSessionId={tutorSessionId}
+                  onStartNode={(node, video) => {
+                    if (node.status === 'LOCKED') {
+                      toast('Complete the active node before starting this one.');
+                      return;
+                    }
+                    setFocusTopic(node.topic);
+                    setSelectedPracticeMode(node.practiceMode);
+                    setWorkspace('practice');
+                    if (video) {
+                      toast.success(`Mission based on: ${video.title}`);
+                    }
+                    void generateAndBindChallenge(
+                      player,
+                      undefined,
+                      learningState,
+                      progression,
+                      video?.practiceFocus ?? node.topic,
+                      node.practiceMode,
+                    );
+                  }}
+                />
+              </section>
+            </main>
+          )}
 
-            {/* AI Chat panel — fixed width on the right */}
-            <aside className="flex w-[400px] flex-shrink-0 flex-col overflow-hidden rounded-2xl border border-app-border bg-bg-1 shadow-sm">
-              <ChatWindow
-                sessionId={tutorSessionId}
-                queuedPrompt={queuedTutorPrompt}
-                onQueuedPromptSent={() => setQueuedTutorPrompt('')}
-              />
-            </aside>
-          </main>
+          {workspace === 'path' && !progression && (
+            <main className="flex-1 overflow-hidden p-4">
+              <section className="flex h-full rounded-2xl border border-app-border bg-bg-1 shadow-sm">
+                <LoadingState />
+              </section>
+            </main>
+          )}
+
+          {workspace === 'practice' && (
+            <main className="flex flex-1 gap-4 overflow-hidden p-4">
+              <section className="flex flex-1 flex-col overflow-hidden rounded-2xl border border-app-border bg-bg-1 shadow-sm">
+                {phase === 'error' && (
+                  <div className="mx-4 mt-4 rounded-xl border border-danger/30 bg-danger/10 px-4 py-3 text-sm text-danger">
+                    {phaseError || 'Something went wrong.'}
+                    <button
+                      onClick={() => void generateAndBindChallenge(player)}
+                      className="ml-3 underline underline-offset-2"
+                    >
+                      Retry
+                    </button>
+                  </div>
+                )}
+                <div className="flex-1 overflow-y-auto p-6">
+                  {loadingChallenge && !challenge ? (
+                    <LoadingState />
+                  ) : challenge ? (
+                    <ChallengePanel
+                      challenge={challenge}
+                      playerId={player.id}
+                      humanLanguage={humanLanguage}
+                      engagement={engagement}
+                      challengeReason={challengeReason}
+                      onEvaluated={handleEvaluated}
+                      onEngagementChange={setEngagement}
+                      onSubmissionResolved={handleSubmissionResolved}
+                      onAskTutor={handleAskTutor}
+                      onComplete={handleChallengeComplete}
+                    />
+                  ) : (
+                    <EmptyState onStart={() => void generateAndBindChallenge(player)} />
+                  )}
+                </div>
+              </section>
+
+              <aside className="flex w-[400px] flex-shrink-0 flex-col overflow-hidden rounded-2xl border border-app-border bg-bg-1 shadow-sm">
+                <ChatWindow
+                  sessionId={tutorSessionId}
+                  queuedPrompt={queuedTutorPrompt}
+                  onQueuedPromptSent={() => setQueuedTutorPrompt('')}
+                />
+              </aside>
+            </main>
+          )}
 
           {drawer === 'dashboard' && (
             <Drawer title="Dashboard" onClose={() => setDrawer(null)}>
@@ -541,6 +607,11 @@ export default function App() {
                 onFocusChip={handleFocusChip}
                 onClaimQuest={claimQuestReward}
                 onReview={startReviewSession}
+                progression={progression}
+                onOpenPath={() => {
+                  setWorkspace('path');
+                  setDrawer(null);
+                }}
                 onOpenPlan={() => setDrawer('plan')}
                 smartPlanHeadline={smartPlan?.headline}
                 assignments={assignments}
@@ -567,6 +638,7 @@ export default function App() {
                   setFocusTopic(topic);
                   setSelectedPracticeMode(mode);
                   setDrawer(null);
+                  setWorkspace('practice');
                   void generateAndBindChallenge(player, undefined, learningState, progression, topic, mode);
                 }}
               />
@@ -618,12 +690,9 @@ function TopBar({
   engagement,
   challenge,
   loadingChallenge,
+  workspace,
   onNewMission,
-  onOpenDashboard,
-  onOpenLeague,
-  onOpenHistory,
-  onOpenPortfolio,
-  onOpenClassroom,
+  onOpenPath,
   onOpenSettings,
   onReset,
 }: {
@@ -631,18 +700,16 @@ function TopBar({
   engagement: EngagementState | null;
   challenge: Challenge | null;
   loadingChallenge: boolean;
+  workspace: Workspace;
   onNewMission: () => void;
-  onOpenDashboard: () => void;
-  onOpenLeague: () => void;
-  onOpenHistory: () => void;
-  onOpenPortfolio: () => void;
-  onOpenClassroom: () => void;
+  onOpenPath: () => void;
   onOpenSettings: () => void;
   onReset: () => void;
 }) {
   const hearts = engagement?.heartsRemaining ?? 0;
   const maxHearts = engagement?.maxHearts ?? 5;
   const streak = engagement?.streak ?? player.currentStreak;
+  const primaryLabel = workspace === 'path' ? 'Continue path' : 'New mission';
 
   return (
     <header className="flex flex-shrink-0 items-center justify-between border-b border-app-border bg-bg-0 px-4 py-3 lg:px-6">
@@ -664,7 +731,12 @@ function TopBar({
               <span className="truncate font-medium text-ink">{challenge.topic}</span>
               <span className="hidden truncate xl:inline">· {challenge.difficulty.toLowerCase()} · {challenge.programmingLanguage}</span>
             </span>
-          ) : null}
+          ) : (
+            <span className="inline-flex min-w-0 items-center gap-2 text-xs text-ink-muted">
+              <Route size={12} className="text-info" />
+              Learning path
+            </span>
+          )}
         </div>
       </div>
 
@@ -677,11 +749,9 @@ function TopBar({
 
         <div className="ml-1 hidden h-6 w-px bg-app-border md:block" />
 
-        <IconButton title="Dashboard" onClick={onOpenDashboard}><LayoutDashboard size={14} /></IconButton>
-        <IconButton title="League table" onClick={onOpenLeague}><Trophy size={14} /></IconButton>
-        <IconButton title="Classrooms" onClick={onOpenClassroom}><GraduationCap size={14} /></IconButton>
-        <IconButton title="History" onClick={onOpenHistory}><History size={14} /></IconButton>
+        <IconButton title="Learning path" onClick={onOpenPath}><Route size={14} /></IconButton>
         <IconButton title="Settings" onClick={onOpenSettings}><SettingsIcon size={14} /></IconButton>
+        <IconButton title="Sign out" onClick={onReset}><LogOut size={14} /></IconButton>
 
         <button
           onClick={onNewMission}
@@ -690,7 +760,7 @@ function TopBar({
         >
           {loadingChallenge
             ? <><RefreshCw size={12} className="animate-spin" /> Generating</>
-            : <><Sparkles size={12} /> New mission</>}
+            : <><Sparkles size={12} /> {primaryLabel}</>}
         </button>
       </div>
     </header>
@@ -712,6 +782,8 @@ function Sidebar({
   onFocusChip,
   onClaimQuest,
   onReview,
+  progression,
+  onOpenPath,
   onOpenPlan,
   smartPlanHeadline,
   assignments,
@@ -727,17 +799,43 @@ function Sidebar({
   onFocusChip: (topic: string) => void;
   onClaimQuest: (quest: DailyQuest) => void;
   onReview: () => void;
+  progression: ProgressionState | null;
+  onOpenPath: () => void;
   onOpenPlan: () => void;
   smartPlanHeadline?: string;
   assignments: AssignmentResponse[];
   onOpenClassrooms: () => void;
 }) {
   const weakSkills = skillInsights.slice(0, 3);
+  const activeNode = progression?.nodes.find(node => node.status === 'ACTIVE') ?? null;
+  const pathProgress = progression ? Math.round((progression.completedCount / Math.max(1, progression.totalCount)) * 100) : 0;
   return (
     <div className="flex min-h-0 flex-col pb-4">
       <div className="mb-4">
         <XPBar player={player} engagement={engagement} compact />
       </div>
+
+      <SidebarSection title="Learning path">
+        <button
+          onClick={onOpenPath}
+          className="flex w-full items-start gap-2.5 rounded-xl border border-app-border bg-bg-2 px-3 py-2.5 text-left transition-colors hover:border-accent/40 hover:bg-bg-3"
+        >
+          <span className="mt-0.5 flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg bg-info/10 text-info">
+            <Route size={13} />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-[12px] font-semibold text-ink">
+              {activeNode ? activeNode.title : 'Build your path'}
+            </span>
+            <span className="mt-0.5 block text-[11px] text-ink-muted">
+              {progression ? `${progression.completedCount}/${progression.totalCount} nodes · ${pathProgress}%` : 'Open path'}
+            </span>
+            <span className="mt-2 block h-1 overflow-hidden rounded-full bg-bg-0">
+              <span className="block h-full rounded-full bg-info transition-[width] duration-500" style={{ width: `${pathProgress}%` }} />
+            </span>
+          </span>
+        </button>
+      </SidebarSection>
 
       <SidebarSection title="Smart plan">
         <button
@@ -926,7 +1024,17 @@ function SidebarSection({ title, children }: { title: string; children: ReactNod
 // Drawer
 // ──────────────────────────────────────────────────────────────────────────
 
-function Drawer({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
+function Drawer({
+  title,
+  onClose,
+  children,
+  size = 'default',
+}: {
+  title: string;
+  onClose: () => void;
+  children: ReactNode;
+  size?: 'default' | 'wide';
+}) {
   useEffect(() => {
     const handler = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose(); };
     window.addEventListener('keydown', handler);
@@ -938,7 +1046,9 @@ function Drawer({ title, onClose, children }: { title: string; onClose: () => vo
       className="fixed inset-0 z-40 flex justify-end bg-bg-0/70 backdrop-blur-sm"
       onClick={event => { if (event.target === event.currentTarget) onClose(); }}
     >
-      <div className="flex h-full w-full max-w-[440px] flex-col border-l border-app-border bg-bg-1 animate-slide-up">
+      <div className={`flex h-full w-full flex-col border-l border-app-border bg-bg-1 animate-slide-up ${
+        size === 'wide' ? 'max-w-[980px]' : 'max-w-[440px]'
+      }`}>
         <header className="flex flex-shrink-0 items-center justify-between border-b border-app-border px-5 py-3.5">
           <h2 className="text-[14px] font-semibold tracking-[-0.01em] text-ink">{title}</h2>
           <button
@@ -952,6 +1062,455 @@ function Drawer({ title, onClose, children }: { title: string; onClose: () => vo
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">{children}</div>
       </div>
     </div>
+  );
+}
+
+function LearningPathContent({
+  progression,
+  player,
+  learningState,
+  tutorSessionId,
+  onStartNode,
+}: {
+  progression: ProgressionState;
+  player: Player;
+  learningState: LearningState;
+  tutorSessionId: string;
+  onStartNode: (node: ProgressionNode, video?: VideoResource) => void;
+}) {
+  const defaultNodeId = progression.activeNodeId
+    ?? progression.nodes.find(node => node.status !== 'COMPLETED')?.nodeId
+    ?? progression.nodes[0]?.nodeId
+    ?? null;
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(defaultNodeId);
+  const selectedNode = progression.nodes.find(node => node.nodeId === selectedNodeId) ?? progression.nodes[0] ?? null;
+  const selectedContent = selectedNode
+    ? buildNodeLearningContent(selectedNode, player.programmingLanguage, learningState)
+    : null;
+  const pathPct = Math.round((progression.completedCount / Math.max(1, progression.totalCount)) * 100);
+  const [pathProgress, setPathProgress] = useState<PathProgressState>(() => loadPathProgressState(player.id));
+  const [selectedVideoId, setSelectedVideoId] = useState<string | null>(null);
+  const [pathCoachPrompt, setPathCoachPrompt] = useState('');
+  const [lessonPanel, setLessonPanel] = useState<'info' | 'quiz' | 'coach'>('info');
+
+  useEffect(() => {
+    setPathProgress(loadPathProgressState(player.id));
+  }, [player.id]);
+
+  useEffect(() => {
+    savePathProgressState(player.id, pathProgress);
+  }, [player.id, pathProgress]);
+
+  useEffect(() => {
+    setSelectedVideoId(selectedContent?.videos[0]?.id ?? null);
+  }, [selectedNode?.nodeId]);
+
+  useEffect(() => {
+    setLessonPanel('info');
+  }, [selectedNode?.nodeId, selectedVideoId]);
+
+  if (!selectedNode || !selectedContent) {
+    return <p className="text-[13px] text-ink-muted">No path nodes are available yet.</p>;
+  }
+
+  const selectedVideo = selectedContent.videos.find(video => video.id === selectedVideoId) ?? selectedContent.videos[0];
+  const nodeProgress = getNodePathProgress(pathProgress, selectedNode.nodeId);
+  const selectedVideoWatched = nodeProgress.watchedVideoIds.includes(selectedVideo.id);
+  const answeredQuizCount = selectedVideo.quiz
+    .filter(question => typeof nodeProgress.exerciseAttempts[question.id]?.score === 'number')
+    .length;
+  const passedQuizCount = selectedVideo.quiz
+    .filter(question => (nodeProgress.exerciseAttempts[question.id]?.score ?? 0) >= 80)
+    .length;
+  const quizComplete = selectedVideo.quiz.length > 0 && passedQuizCount === selectedVideo.quiz.length;
+  const canCompleteLearning = selectedVideoWatched && quizComplete;
+  const dueReviewCards = getDueReviewCards(pathProgress);
+  const canPracticeSelectedVideo = selectedNode.status !== 'LOCKED' && canCompleteLearning;
+  const gateLabel = !selectedVideoWatched
+    ? 'Watch and mark the tutorial first'
+    : !quizComplete
+      ? 'Pass the tutorial quiz first'
+      : 'Ready for practice';
+
+  const handleMarkVideo = (videoId: string) => {
+    setPathProgress(current => markVideoWatched(current, selectedNode.nodeId, videoId));
+    toast.success('Video marked as watched.');
+  };
+
+  const handleAnswerQuiz = (questionId: string, selectedIndex: number, correctIndex: number) => {
+    const correct = selectedIndex === correctIndex;
+    setPathProgress(current => scoreExercise(current, selectedNode.nodeId, questionId, correct ? 100 : 30));
+    if (correct) toast.success('Correct.');
+    else toast('Not yet. Ask the coach or try again.');
+  };
+
+  const handleCompleteLearning = () => {
+    if (!canCompleteLearning) {
+      toast('Watch the tutorial and pass its quiz first.');
+      return;
+    }
+
+    setPathProgress(current => {
+      const quizContent = {
+        ...selectedContent,
+        exercises: selectedVideo.quiz.map(question => ({
+          id: question.id,
+          type: 'multiple_choice' as const,
+          title: question.question,
+          prompt: question.question,
+          reviewPrompt: question.explanation,
+          estimatedMinutes: 1,
+        })),
+      };
+      const { state, result } = completeNodeLearningSession(current, selectedNode, quizContent);
+      toast.success(`${result.score}% mastery · ${result.nextAction}`);
+      return state;
+    });
+  };
+
+  const handleStartPractice = () => {
+    if (selectedNode.status === 'LOCKED') {
+      toast('Complete the active node before starting this one.');
+      return;
+    }
+    if (!selectedVideoWatched) {
+      toast('Mark this tutorial as watched before practice.');
+      return;
+    }
+    if (!quizComplete) {
+      toast('Pass the tutorial quiz before practice.');
+      return;
+    }
+    onStartNode(selectedNode, selectedVideo);
+  };
+
+  const sendPathCoachPrompt = (prompt: string) => {
+    setPathCoachPrompt([
+      `Learning path context: ${selectedNode.title}.`,
+      `Tutorial: ${selectedVideo.title}.`,
+      `Focus: ${selectedVideo.practiceFocus}.`,
+      `Short explanation: ${selectedVideo.shortExplanation}`,
+      prompt,
+    ].join('\n'));
+  };
+
+  return (
+    <div className="flex min-h-full flex-col gap-3 lg:h-full lg:min-h-0">
+      <section className="flex-shrink-0 rounded-xl border border-app-border bg-bg-2 px-3 py-2.5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="tag">Learning path</span>
+              <span className="tag">{player.programmingLanguage}</span>
+              <span className="tag">{progression.completedCount}/{progression.totalCount} nodes</span>
+            </div>
+            <h2 className="mt-1 truncate text-[18px] font-semibold tracking-[-0.02em] text-ink">{selectedNode.title}</h2>
+          </div>
+          <button
+            onClick={handleStartPractice}
+            className={`inline-flex flex-shrink-0 items-center gap-1.5 rounded-lg px-3 py-2 text-[12px] font-semibold transition-colors ${
+              canPracticeSelectedVideo
+                ? 'bg-accent text-bg-0 hover:bg-accent/85'
+                : 'border border-app-border bg-bg-1 text-ink-muted hover:border-warning/40 hover:text-warning'
+            }`}
+          >
+            {selectedNode.status === 'LOCKED' ? <Lock size={13} /> : <PlayCircle size={13} />}
+            {canPracticeSelectedVideo ? 'Practice video' : gateLabel}
+          </button>
+        </div>
+        <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-bg-0">
+          <div className="h-full rounded-full bg-accent transition-[width] duration-500" style={{ width: `${pathPct}%` }} />
+        </div>
+      </section>
+
+      <div className="flex-shrink-0 overflow-x-auto rounded-xl border border-app-border bg-bg-2 p-2">
+        <div className="flex min-w-max gap-2">
+          {progression.nodes.map((node, index) => {
+            const active = node.nodeId === selectedNode.nodeId;
+            const locked = node.status === 'LOCKED';
+            return (
+              <button
+                key={node.nodeId}
+                onClick={() => {
+                  if (locked) {
+                    toast('Complete the active lesson before opening this node.');
+                    return;
+                  }
+                  setSelectedNodeId(node.nodeId);
+                }}
+                aria-disabled={locked}
+                className={`w-[170px] rounded-lg border px-3 py-2 text-left transition-colors ${
+                  active
+                    ? 'border-accent/50 bg-accent/10'
+                    : locked
+                      ? 'cursor-not-allowed border-app-border bg-bg-1 opacity-50'
+                      : 'border-app-border bg-bg-1 hover:border-info/30 hover:bg-bg-3'
+                }`}
+              >
+                <span className="flex items-center justify-between gap-2">
+                  <span className="truncate text-[12px] font-semibold text-ink">{index + 1}. {node.title}</span>
+                  <NodeStatusBadge status={node.status} />
+                </span>
+                <span className="mt-0.5 block truncate text-[11px] text-ink-muted">{node.topic}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <section className="min-h-0 flex-1 overflow-x-auto overflow-y-hidden">
+        <div
+          className="grid h-full min-h-0 min-w-[930px] gap-4"
+          style={{ gridTemplateColumns: 'minmax(0, 1fr) 390px' }}
+        >
+          <article className="flex min-h-0 flex-col overflow-hidden rounded-xl border border-app-border bg-bg-2">
+            <div className="flex flex-shrink-0 items-center justify-between border-b border-app-border px-4 py-3">
+              <div>
+                <p className="eyebrow">Tutorial</p>
+                <h3 className="mt-1 text-[14px] font-semibold text-ink">{selectedVideo.title}</h3>
+              </div>
+              <Youtube size={18} className="text-danger" />
+            </div>
+            <div className="flex min-h-0 flex-1 flex-col p-4">
+              <div className="min-h-0 flex-1 overflow-hidden rounded-xl border border-app-border bg-black">
+                <iframe
+                  key={selectedVideo.videoId}
+                  src={buildYoutubeEmbedUrl(selectedVideo.videoId)}
+                  title={selectedVideo.title}
+                  className="h-full w-full"
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                  referrerPolicy="strict-origin-when-cross-origin"
+                  allowFullScreen
+                />
+              </div>
+              <div className="mt-3 grid flex-shrink-0 gap-2 sm:grid-cols-3">
+                {selectedContent.videos.map(video => {
+                  const watched = nodeProgress.watchedVideoIds.includes(video.id);
+                  const selected = selectedVideo.id === video.id;
+                  return (
+                    <button
+                      key={video.id}
+                      onClick={() => setSelectedVideoId(video.id)}
+                      className={`rounded-lg border px-3 py-2 text-left transition-colors ${
+                        selected
+                          ? 'border-danger/40 bg-danger/10'
+                          : watched ? 'border-accent/30 bg-accent/10' : 'border-app-border bg-bg-1 hover:border-info/30'
+                      }`}
+                    >
+                      <span className="flex items-center justify-between gap-2">
+                        <span className="truncate text-[12px] font-semibold text-ink capitalize">{video.role}</span>
+                        {watched ? <CheckCircle2 size={13} className="text-accent" /> : <PlayCircle size={13} className="text-ink-subtle" />}
+                      </span>
+                      <span className="mt-0.5 block truncate text-[11px] text-ink-muted">{video.durationHint}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </article>
+
+          <article className="flex min-h-0 flex-col overflow-hidden rounded-xl border border-app-border bg-bg-2">
+            <div className="flex-shrink-0 border-b border-app-border px-4 py-3">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="eyebrow">Lesson panel</p>
+                  <h3 className="mt-1 text-[14px] font-semibold text-ink">{lessonPanel === 'coach' ? 'AI coach' : lessonPanel === 'quiz' ? 'Tutorial quiz' : 'Video info'}</h3>
+                </div>
+                <span className="tag">{gateLabel}</span>
+              </div>
+              <div className="mt-3 grid grid-cols-3 gap-1.5">
+                {(['info', 'quiz', 'coach'] as const).map(panel => (
+                  <button
+                    key={panel}
+                    onClick={() => setLessonPanel(panel)}
+                    className={`rounded-lg border px-2 py-1.5 text-[11px] font-semibold capitalize transition-colors ${
+                      lessonPanel === panel
+                        ? 'border-accent/40 bg-accent/10 text-accent'
+                        : 'border-app-border bg-bg-1 text-ink-muted hover:text-ink'
+                    }`}
+                  >
+                    {panel}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {lessonPanel === 'info' && (
+              <div className="min-h-0 flex-1 overflow-y-auto p-4">
+                <div className="rounded-xl border border-app-border bg-bg-1 p-4">
+                  <p className="text-[13px] leading-6 text-ink-muted">{selectedVideo.shortExplanation}</p>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <span className="tag capitalize">{selectedVideo.role}</span>
+                    <span className="tag">{selectedVideo.channelHint}</span>
+                    <span className="tag">{selectedVideo.durationHint}</span>
+                  </div>
+                </div>
+                <div className="mt-3 grid gap-2">
+                  {selectedVideo.keyIdeas.map((idea, index) => (
+                    <div key={idea} className="rounded-lg border border-app-border bg-bg-1 px-3 py-2">
+                      <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-accent">Idea {index + 1}</p>
+                      <p className="mt-1 text-[12px] leading-5 text-ink-muted">{idea}</p>
+                    </div>
+                  ))}
+                </div>
+                <div className="mt-4 rounded-xl border border-warning/30 bg-warning/10 p-4">
+                  <p className="text-[12px] font-semibold uppercase tracking-[0.16em] text-warning">Score 100% to unlock practice</p>
+                  <p className="mt-2 text-[12px] leading-5 text-ink-muted">
+                    Mark the tutorial watched, then pass the quiz. Current quiz: {passedQuizCount}/{selectedVideo.quiz.length} correct.
+                  </p>
+                </div>
+                <div className="mt-4 grid gap-2">
+                  <button
+                    onClick={() => handleMarkVideo(selectedVideo.id)}
+                    disabled={selectedVideoWatched}
+                    className="rounded-lg border border-app-border bg-bg-1 px-3 py-2 text-[12px] font-semibold text-ink transition-colors hover:border-accent/40 hover:text-accent disabled:opacity-50"
+                  >
+                    {selectedVideoWatched ? 'Tutorial watched' : 'Mark tutorial watched'}
+                  </button>
+                  <button
+                    onClick={() => setLessonPanel('quiz')}
+                    className="rounded-lg bg-danger px-3 py-2 text-[12px] font-semibold text-white transition-colors hover:bg-danger/85"
+                  >
+                    Take quiz
+                  </button>
+                  <button
+                    onClick={() => {
+                      setLessonPanel('coach');
+                      sendPathCoachPrompt('Explain this tutorial in 4 short bullets for a beginner.');
+                    }}
+                    className="rounded-lg border border-app-border bg-bg-1 px-3 py-2 text-[12px] font-semibold text-ink transition-colors hover:border-info/40 hover:text-info"
+                  >
+                    Ask AI to explain
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {lessonPanel === 'quiz' && (
+              <div className="min-h-0 flex-1 overflow-y-auto p-4">
+                <div className="mb-3 rounded-xl border border-app-border bg-bg-1 p-3">
+                  <p className="text-[12px] font-semibold text-ink">{answeredQuizCount}/{selectedVideo.quiz.length} answered · {passedQuizCount}/{selectedVideo.quiz.length} correct</p>
+                </div>
+                <div className="space-y-3">
+                  {selectedVideo.quiz.map((question, questionIndex) => {
+                    const attempt = nodeProgress.exerciseAttempts[question.id];
+                    const answered = typeof attempt?.score === 'number';
+                    const correct = (attempt?.score ?? 0) >= 80;
+                    return (
+                      <div key={question.id} className="rounded-xl border border-app-border bg-bg-1 p-3">
+                        <p className="text-[13px] font-semibold leading-5 text-ink">{questionIndex + 1}. {question.question}</p>
+                        <div className="mt-2 grid gap-2">
+                          {question.choices.map((choice, choiceIndex) => (
+                            <button
+                              key={choice}
+                              onClick={() => handleAnswerQuiz(question.id, choiceIndex, question.correctIndex)}
+                              className={`rounded-lg border px-3 py-2 text-left text-[12px] leading-5 transition-colors ${
+                                correct && choiceIndex === question.correctIndex
+                                  ? 'border-accent/40 bg-accent/10 text-accent'
+                                  : 'border-app-border bg-bg-2 text-ink-muted hover:border-info/40 hover:text-info'
+                              }`}
+                            >
+                              {choice}
+                            </button>
+                          ))}
+                        </div>
+                        {answered && (
+                          <p className={`mt-2 text-[11px] leading-5 ${correct ? 'text-accent' : 'text-warning'}`}>
+                            {correct ? 'Correct. ' : 'Try again. '}{question.explanation}
+                          </p>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="mt-4 grid gap-2">
+                  <button
+                    onClick={handleCompleteLearning}
+                    disabled={!canCompleteLearning}
+                    className="rounded-lg bg-info px-3 py-2 text-[12px] font-semibold text-bg-0 transition-colors hover:bg-info/85 disabled:opacity-45"
+                  >
+                    Save quiz result
+                  </button>
+                  <button
+                    onClick={handleStartPractice}
+                    className={`rounded-lg px-3 py-2 text-[12px] font-semibold transition-colors ${
+                      canPracticeSelectedVideo
+                        ? 'bg-accent text-bg-0 hover:bg-accent/85'
+                        : 'border border-app-border bg-bg-1 text-ink-muted hover:border-warning/40 hover:text-warning'
+                    }`}
+                  >
+                    {canPracticeSelectedVideo ? 'Start practice mission' : gateLabel}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {lessonPanel === 'coach' && (
+              <div className="flex min-h-0 flex-1 flex-col p-3">
+                <div className="mb-2 grid flex-shrink-0 gap-2">
+                  <button onClick={() => sendPathCoachPrompt('Explain this tutorial in 4 short bullets for a beginner.')} className="rounded-lg border border-app-border bg-bg-1 px-3 py-2 text-left text-[12px] font-semibold text-ink transition-colors hover:border-info/40 hover:text-info">Explain shortly</button>
+                  <button onClick={() => sendPathCoachPrompt('Ask me one Socratic question to check whether I understood the tutorial.')} className="rounded-lg border border-app-border bg-bg-1 px-3 py-2 text-left text-[12px] font-semibold text-ink transition-colors hover:border-info/40 hover:text-info">Test my understanding</button>
+                </div>
+                <div className="min-h-0 flex-1">
+                  <ChatWindow
+                    sessionId={`${tutorSessionId}_path_${selectedNode.nodeId}`}
+                    queuedPrompt={pathCoachPrompt}
+                    onQueuedPromptSent={() => setPathCoachPrompt('')}
+                  />
+                </div>
+              </div>
+            )}
+          </article>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function PathStepCard({
+  active,
+  done,
+  step,
+  title,
+  text,
+}: {
+  active: boolean;
+  done: boolean;
+  step: string;
+  title: string;
+  text: string;
+}) {
+  return (
+    <div className={`rounded-xl border p-3 transition-colors ${
+      done
+        ? 'border-accent/30 bg-accent/10'
+        : active ? 'border-info/40 bg-info/10' : 'border-app-border bg-bg-1'
+    }`}>
+      <div className="flex items-start gap-3">
+        <span className={`flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-[12px] font-semibold ${
+          done ? 'bg-accent text-bg-0' : active ? 'bg-info text-bg-0' : 'bg-bg-3 text-ink-muted'
+        }`}>
+          {done ? <CheckCircle2 size={14} /> : step}
+        </span>
+        <span className="min-w-0">
+          <span className="block text-[12px] font-semibold text-ink">{title}</span>
+          <span className="mt-1 block text-[11px] leading-4 text-ink-muted">{text}</span>
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function NodeStatusBadge({ status }: { status: ProgressStatus }) {
+  const className = status === 'COMPLETED'
+    ? 'bg-accent/10 text-accent'
+    : status === 'ACTIVE'
+      ? 'bg-info/10 text-info'
+      : 'bg-bg-3 text-ink-subtle';
+  return (
+    <span className={`rounded-md px-1.5 py-0.5 text-[10px] font-semibold lowercase ${className}`}>
+      {status.toLowerCase()}
+    </span>
   );
 }
 
@@ -1121,6 +1680,15 @@ function IconButton({ children, onClick, title }: { children: ReactNode; onClick
   );
 }
 
+function MiniStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg border border-app-border bg-bg-0 px-2.5 py-2 text-center">
+      <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-ink-subtle">{label}</p>
+      <p className="mt-0.5 text-[13px] font-semibold text-ink">{value}</p>
+    </div>
+  );
+}
+
 function SettingsDrawerContent() {
   const [privacy, setPrivacy] = useState<PrivacySettings | null>(null);
   const [loading, setLoading] = useState(true);
@@ -1197,15 +1765,6 @@ function SettingsDrawerContent() {
           available from the UI — contact your administrator.
         </div>
       </section>
-    </div>
-  );
-}
-
-function MiniStat({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-lg border border-app-border bg-bg-0 px-2.5 py-2 text-center">
-      <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-ink-subtle">{label}</p>
-      <p className="mt-0.5 text-[13px] font-semibold text-ink">{value}</p>
     </div>
   );
 }
