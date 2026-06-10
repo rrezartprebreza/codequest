@@ -1124,13 +1124,46 @@ function LearningPathContent({
     .length;
   const quizComplete = selectedVideo.quiz.length > 0 && passedQuizCount === selectedVideo.quiz.length;
   const canCompleteLearning = selectedVideoWatched && quizComplete;
+  const lessonCheckpointSaved = Boolean(nodeProgress.completedAt) && canCompleteLearning;
   const dueReviewCards = getDueReviewCards(pathProgress);
-  const canPracticeSelectedVideo = selectedNode.status !== 'LOCKED' && canCompleteLearning;
+  const canPracticeSelectedVideo = selectedNode.status !== 'LOCKED' && lessonCheckpointSaved;
   const gateLabel = !selectedVideoWatched
     ? 'Watch and mark the tutorial first'
     : !quizComplete
       ? 'Pass the tutorial quiz first'
-      : 'Ready for practice';
+      : !lessonCheckpointSaved
+        ? 'Save the quiz result first'
+        : 'Ready for practice';
+  const lessonSteps = [
+    {
+      id: 'watch',
+      title: 'Watch',
+      text: selectedVideoWatched ? 'Tutorial marked as watched.' : 'Watch the selected tutorial, then mark it watched.',
+      done: selectedVideoWatched,
+      active: !selectedVideoWatched,
+    },
+    {
+      id: 'summary',
+      title: 'Understand',
+      text: 'Read the short explanation and key ideas before the check.',
+      done: selectedVideoWatched,
+      active: selectedVideoWatched && !quizComplete,
+    },
+    {
+      id: 'quiz',
+      title: 'Quiz',
+      text: quizComplete ? 'Quick check passed.' : `${passedQuizCount}/${selectedVideo.quiz.length} correct so far.`,
+      done: quizComplete,
+      active: selectedVideoWatched && !quizComplete,
+    },
+    {
+      id: 'practice',
+      title: 'Practice',
+      text: lessonCheckpointSaved ? 'Mission unlocked from this tutorial.' : 'Save the quiz result to unlock the mission.',
+      done: lessonCheckpointSaved,
+      active: canCompleteLearning && !lessonCheckpointSaved,
+    },
+  ];
   const coachSeedMessages = [
     {
       id: `${selectedVideo.id}-seed-1`,
@@ -1183,7 +1216,7 @@ function LearningPathContent({
         })),
       };
       const { state, result } = completeNodeLearningSession(current, selectedNode, quizContent);
-      toast.success(`${result.score}% mastery · ${result.nextAction}`);
+      toast.success(`${result.score}% mastery saved. Practice mission unlocked.`);
       return state;
     });
   };
@@ -1199,6 +1232,10 @@ function LearningPathContent({
     }
     if (!quizComplete) {
       toast('Pass the tutorial quiz before practice.');
+      return;
+    }
+    if (!lessonCheckpointSaved) {
+      toast('Save the quiz result before practice.');
       return;
     }
     onStartNode(selectedNode, selectedVideo);
@@ -1240,6 +1277,18 @@ function LearningPathContent({
         </div>
         <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-bg-0">
           <div className="h-full rounded-full bg-accent transition-[width] duration-500" style={{ width: `${pathPct}%` }} />
+        </div>
+        <div className="mt-3 grid gap-2 md:grid-cols-4">
+          {lessonSteps.map((step, index) => (
+            <PathStepCard
+              key={step.id}
+              active={step.active}
+              done={step.done}
+              step={`${index + 1}`}
+              title={step.title}
+              text={step.text}
+            />
+          ))}
         </div>
       </section>
 
@@ -1334,7 +1383,7 @@ function LearningPathContent({
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <p className="eyebrow">Lesson panel</p>
-                  <h3 className="mt-1 text-[14px] font-semibold text-ink">{lessonPanel === 'coach' ? 'AI coach' : lessonPanel === 'quiz' ? 'Tutorial quiz' : 'Video info'}</h3>
+                  <h3 className="mt-1 text-[14px] font-semibold text-ink">{lessonPanel === 'coach' ? 'AI help' : lessonPanel === 'quiz' ? 'Tutorial quiz' : 'Video summary'}</h3>
                 </div>
                 <span className="tag">{gateLabel}</span>
               </div>
@@ -1349,7 +1398,7 @@ function LearningPathContent({
                         : 'border-app-border bg-bg-1 text-ink-muted hover:text-ink'
                     }`}
                   >
-                    {panel}
+                    {panel === 'coach' ? 'help' : panel === 'info' ? 'summary' : panel}
                   </button>
                 ))}
               </div>
@@ -1357,12 +1406,23 @@ function LearningPathContent({
 
             {lessonPanel === 'info' && (
               <div className="min-h-0 flex-1 overflow-y-auto p-4">
-                <div className="rounded-xl border border-app-border bg-bg-1 p-4">
-                  <p className="text-[13px] leading-6 text-ink-muted">{selectedVideo.shortExplanation}</p>
+                <div className="rounded-xl border border-info/30 bg-info/10 p-4">
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-info">AI-style lesson brief</p>
+                  <p className="mt-2 text-[13px] leading-6 text-ink">{selectedVideo.shortExplanation}</p>
                   <div className="mt-3 flex flex-wrap gap-2">
                     <span className="tag capitalize">{selectedVideo.role}</span>
                     <span className="tag">{selectedVideo.channelHint}</span>
                     <span className="tag">{selectedVideo.durationHint}</span>
+                  </div>
+                </div>
+                <div className="mt-3 grid gap-2 md:grid-cols-2">
+                  <div className="rounded-lg border border-app-border bg-bg-1 px-3 py-2">
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-warning">Common mistake</p>
+                    <p className="mt-1 text-[12px] leading-5 text-ink-muted">Watching passively, then jumping straight into code. First trace one tiny input and name the first wrong step.</p>
+                  </div>
+                  <div className="rounded-lg border border-app-border bg-bg-1 px-3 py-2">
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-accent">Practice focus</p>
+                    <p className="mt-1 text-[12px] leading-5 text-ink-muted">{selectedVideo.practiceFocus}</p>
                   </div>
                 </div>
                 <div className="mt-3 grid gap-2">
@@ -1374,9 +1434,9 @@ function LearningPathContent({
                   ))}
                 </div>
                 <div className="mt-4 rounded-xl border border-warning/30 bg-warning/10 p-4">
-                  <p className="text-[12px] font-semibold uppercase tracking-[0.16em] text-warning">Score 100% to unlock practice</p>
+                  <p className="text-[12px] font-semibold uppercase tracking-[0.16em] text-warning">Quiz gate before practice</p>
                   <p className="mt-2 text-[12px] leading-5 text-ink-muted">
-                    Mark the tutorial watched, then pass the quiz. Current quiz: {passedQuizCount}/{selectedVideo.quiz.length} correct.
+                    Mark the tutorial watched, pass the quiz, then save the result. Current quiz: {passedQuizCount}/{selectedVideo.quiz.length} correct.
                   </p>
                 </div>
                 <div className="mt-4 grid gap-2">
@@ -1399,7 +1459,7 @@ function LearningPathContent({
                     }}
                     className="rounded-lg border border-app-border bg-bg-1 px-3 py-2 text-[12px] font-semibold text-ink transition-colors hover:border-info/40 hover:text-info"
                   >
-                    Ask AI to explain
+                    Open AI help
                   </button>
                 </div>
               </div>
@@ -1434,9 +1494,22 @@ function LearningPathContent({
                           ))}
                         </div>
                         {answered && (
-                          <p className={`mt-2 text-[11px] leading-5 ${correct ? 'text-accent' : 'text-warning'}`}>
-                            {correct ? 'Correct. ' : 'Try again. '}{question.explanation}
-                          </p>
+                          <div className="mt-2">
+                            <p className={`text-[11px] leading-5 ${correct ? 'text-accent' : 'text-warning'}`}>
+                              {correct ? 'Correct. ' : 'Try again. '}{question.explanation}
+                            </p>
+                            {!correct && (
+                              <button
+                                onClick={() => {
+                                  setLessonPanel('coach');
+                                  sendPathCoachPrompt(`Explain why this quiz answer is wrong in 3 short sentences. Question: ${question.question}. Correct idea: ${question.explanation}`);
+                                }}
+                                className="mt-2 rounded-md border border-warning/25 bg-warning/10 px-2 py-1 text-[11px] font-semibold text-warning transition-colors hover:bg-warning/20"
+                              >
+                                Ask AI help
+                              </button>
+                            )}
+                          </div>
                         )}
                       </div>
                     );
@@ -1445,10 +1518,10 @@ function LearningPathContent({
                 <div className="mt-4 grid gap-2">
                   <button
                     onClick={handleCompleteLearning}
-                    disabled={!canCompleteLearning}
+                    disabled={!canCompleteLearning || lessonCheckpointSaved}
                     className="rounded-lg bg-info px-3 py-2 text-[12px] font-semibold text-bg-0 transition-colors hover:bg-info/85 disabled:opacity-45"
                   >
-                    Save quiz result
+                    {lessonCheckpointSaved ? 'Quiz result saved' : 'Save quiz result'}
                   </button>
                   <button
                     onClick={handleStartPractice}
@@ -1467,9 +1540,9 @@ function LearningPathContent({
             {lessonPanel === 'coach' && (
               <div className="flex min-h-0 flex-1 flex-col p-3">
                 <div className="mb-2 flex-shrink-0 rounded-xl border border-app-border bg-bg-1 p-3">
-                  <p className="text-[12px] font-semibold text-ink">Coach for this tutorial</p>
+                  <p className="text-[12px] font-semibold text-ink">AI help for this tutorial</p>
                   <p className="mt-1.5 text-[12px] leading-5 text-ink-muted">
-                    Use this only when the video or quiz feels unclear. Practice stays locked until the tutorial is marked watched and the quiz is passed.
+                    Use AI only when the video or quiz feels unclear. If AI is unavailable, the summary and quiz still work.
                   </p>
                 </div>
                 <div className="mb-2 grid flex-shrink-0 grid-cols-2 gap-2">
