@@ -1122,6 +1122,7 @@ function LearningPathContent({
   const passedQuizCount = selectedVideo.quiz
     .filter(question => (nodeProgress.exerciseAttempts[question.id]?.score ?? 0) >= 80)
     .length;
+  const quizProgressPct = Math.round((passedQuizCount / Math.max(1, selectedVideo.quiz.length)) * 100);
   const quizComplete = selectedVideo.quiz.length > 0 && passedQuizCount === selectedVideo.quiz.length;
   const canCompleteLearning = selectedVideoWatched && quizComplete;
   const lessonCheckpointSaved = Boolean(nodeProgress.completedAt) && canCompleteLearning;
@@ -1382,22 +1383,23 @@ function LearningPathContent({
             <div className="flex-shrink-0 border-b border-app-border px-4 py-3">
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <p className="eyebrow">Lesson panel</p>
+                  <p className="eyebrow">Curriculum</p>
                   <h3 className="mt-1 text-[14px] font-semibold text-ink">{lessonPanel === 'coach' ? 'AI help' : lessonPanel === 'quiz' ? 'Tutorial quiz' : 'Video summary'}</h3>
                 </div>
-                <span className="tag">{gateLabel}</span>
+                <span className={`tag ${canPracticeSelectedVideo ? 'text-accent' : ''}`}>{gateLabel}</span>
               </div>
-              <div className="mt-3 grid grid-cols-3 gap-1.5">
+              <div className="mt-3 grid grid-cols-3 gap-1.5 rounded-lg bg-bg-0 p-1">
                 {(['info', 'quiz', 'coach'] as const).map(panel => (
                   <button
                     key={panel}
                     onClick={() => setLessonPanel(panel)}
-                    className={`rounded-lg border px-2 py-1.5 text-[11px] font-semibold capitalize transition-colors ${
+                    className={`inline-flex items-center justify-center gap-1.5 rounded-md border px-2 py-1.5 text-[11px] font-semibold capitalize transition-colors ${
                       lessonPanel === panel
                         ? 'border-accent/40 bg-accent/10 text-accent'
-                        : 'border-app-border bg-bg-1 text-ink-muted hover:text-ink'
+                        : 'border-transparent bg-transparent text-ink-muted hover:bg-bg-2 hover:text-ink'
                     }`}
                   >
+                    {panel === 'coach' ? <Brain size={12} /> : panel === 'info' ? <BookOpen size={12} /> : <Target size={12} />}
                     {panel === 'coach' ? 'help' : panel === 'info' ? 'summary' : panel}
                   </button>
                 ))}
@@ -1406,60 +1408,97 @@ function LearningPathContent({
 
             {lessonPanel === 'info' && (
               <div className="min-h-0 flex-1 overflow-y-auto p-4">
-                <div className="rounded-xl border border-info/30 bg-info/10 p-4">
-                  <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-info">AI-style lesson brief</p>
-                  <p className="mt-2 text-[13px] leading-6 text-ink">{selectedVideo.shortExplanation}</p>
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    <span className="tag capitalize">{selectedVideo.role}</span>
-                    <span className="tag">{selectedVideo.channelHint}</span>
-                    <span className="tag">{selectedVideo.durationHint}</span>
-                  </div>
-                </div>
-                <div className="mt-3 grid gap-2 md:grid-cols-2">
-                  <div className="rounded-lg border border-app-border bg-bg-1 px-3 py-2">
-                    <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-warning">Common mistake</p>
-                    <p className="mt-1 text-[12px] leading-5 text-ink-muted">Watching passively, then jumping straight into code. First trace one tiny input and name the first wrong step.</p>
-                  </div>
-                  <div className="rounded-lg border border-app-border bg-bg-1 px-3 py-2">
-                    <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-accent">Practice focus</p>
-                    <p className="mt-1 text-[12px] leading-5 text-ink-muted">{selectedVideo.practiceFocus}</p>
-                  </div>
-                </div>
-                <div className="mt-3 grid gap-2">
-                  {selectedVideo.keyIdeas.map((idea, index) => (
-                    <div key={idea} className="rounded-lg border border-app-border bg-bg-1 px-3 py-2">
-                      <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-accent">Idea {index + 1}</p>
-                      <p className="mt-1 text-[12px] leading-5 text-ink-muted">{idea}</p>
+                <div className="rounded-xl border border-app-border bg-bg-1">
+                  <div className="flex items-center justify-between border-b border-app-border px-4 py-3">
+                    <div className="flex items-center gap-2">
+                      <Youtube size={16} className="text-danger" />
+                      <p className="text-[12px] font-semibold uppercase tracking-[0.16em] text-ink">Video info</p>
                     </div>
-                  ))}
+                    <span className="text-[11px] font-medium text-ink-muted">{selectedVideo.durationHint}</span>
+                  </div>
+                  <div className="p-4">
+                    <p className="text-[13px] leading-6 text-ink-muted">{selectedVideo.shortExplanation}</p>
+                    <div className="mt-4 rounded-lg border-l-2 border-danger bg-bg-2 px-3 py-2">
+                      <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-ink-subtle">Common mistake</p>
+                      <p className="mt-1 text-[12px] leading-5 text-ink-muted">Watching passively, then jumping straight into code. First trace one tiny input and name the first wrong step.</p>
+                    </div>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <span className="tag capitalize">{selectedVideo.role}</span>
+                      <span className="tag">{selectedVideo.channelHint}</span>
+                      {selectedVideo.keyIdeas.slice(0, 2).map(idea => (
+                        <span key={idea} className="tag max-w-full truncate">{idea}</span>
+                      ))}
+                    </div>
+                  </div>
                 </div>
-                <div className="mt-4 rounded-xl border border-warning/30 bg-warning/10 p-4">
-                  <p className="text-[12px] font-semibold uppercase tracking-[0.16em] text-warning">Quiz gate before practice</p>
+
+                <div className="mt-3 grid grid-cols-3 gap-2">
+                  <button
+                    onClick={() => setLessonPanel('quiz')}
+                    className={`rounded-lg border px-2 py-3 text-center transition-colors ${
+                      quizComplete
+                        ? 'border-accent/40 bg-accent/10 text-accent'
+                        : 'border-danger/40 bg-danger/10 text-danger hover:bg-danger/15'
+                    }`}
+                  >
+                    <Target size={15} className="mx-auto" />
+                    <span className="mt-1 block text-[10px] font-semibold uppercase tracking-[0.12em]">Quiz</span>
+                  </button>
+                  <button
+                    onClick={() => setLessonPanel('coach')}
+                    className="rounded-lg border border-app-border bg-bg-1 px-2 py-3 text-center text-ink-muted transition-colors hover:border-info/40 hover:text-info"
+                  >
+                    <Brain size={15} className="mx-auto" />
+                    <span className="mt-1 block text-[10px] font-semibold uppercase tracking-[0.12em]">Help</span>
+                  </button>
+                  <button
+                    onClick={handleStartPractice}
+                    className={`rounded-lg border px-2 py-3 text-center transition-colors ${
+                      canPracticeSelectedVideo
+                        ? 'border-accent/40 bg-accent/10 text-accent hover:bg-accent/15'
+                        : 'cursor-not-allowed border-app-border bg-bg-1 text-ink-subtle'
+                    }`}
+                  >
+                    {canPracticeSelectedVideo ? <PlayCircle size={15} className="mx-auto" /> : <Lock size={15} className="mx-auto" />}
+                    <span className="mt-1 block text-[10px] font-semibold uppercase tracking-[0.12em]">Practice</span>
+                  </button>
+                </div>
+
+                <div className="mt-3 rounded-xl border border-warning/30 bg-warning/10 p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-[12px] font-semibold uppercase tracking-[0.14em] text-warning">Unlock rule</p>
+                    <span className="font-mono text-[12px] text-warning">{quizProgressPct}%</span>
+                  </div>
+                  <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-bg-0">
+                    <div className="h-full rounded-full bg-warning transition-[width] duration-500" style={{ width: `${quizProgressPct}%` }} />
+                  </div>
                   <p className="mt-2 text-[12px] leading-5 text-ink-muted">
-                    Mark the tutorial watched, pass the quiz, then save the result. Current quiz: {passedQuizCount}/{selectedVideo.quiz.length} correct.
+                    Score all quiz questions correctly and save the result to unlock the practice mission.
                   </p>
                 </div>
-                <div className="mt-4 grid gap-2">
+
+                <div className="mt-3 rounded-xl border border-app-border bg-bg-1 p-3">
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-accent">Practice focus</p>
+                  <p className="mt-1 text-[12px] leading-5 text-ink-muted">{selectedVideo.practiceFocus}</p>
+                </div>
+
+                <div className="mt-3 grid gap-2">
                   <button
                     onClick={() => handleMarkVideo(selectedVideo.id)}
                     disabled={selectedVideoWatched}
-                    className="rounded-lg border border-app-border bg-bg-1 px-3 py-2 text-[12px] font-semibold text-ink transition-colors hover:border-accent/40 hover:text-accent disabled:opacity-50"
+                    className={`rounded-lg px-3 py-2 text-[12px] font-semibold transition-colors ${
+                      selectedVideoWatched
+                        ? 'border border-accent/30 bg-accent/10 text-accent'
+                        : 'bg-accent text-bg-0 hover:bg-accent/85'
+                    }`}
                   >
                     {selectedVideoWatched ? 'Tutorial watched' : 'Mark tutorial watched'}
                   </button>
                   <button
                     onClick={() => setLessonPanel('quiz')}
-                    className="rounded-lg bg-danger px-3 py-2 text-[12px] font-semibold text-white transition-colors hover:bg-danger/85"
+                    className="rounded-lg border border-danger/40 bg-danger/10 px-3 py-2 text-[12px] font-semibold text-danger transition-colors hover:bg-danger/15"
                   >
                     Take quiz
-                  </button>
-                  <button
-                    onClick={() => {
-                      setLessonPanel('coach');
-                    }}
-                    className="rounded-lg border border-app-border bg-bg-1 px-3 py-2 text-[12px] font-semibold text-ink transition-colors hover:border-info/40 hover:text-info"
-                  >
-                    Open AI help
                   </button>
                 </div>
               </div>
