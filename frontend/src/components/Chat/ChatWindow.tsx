@@ -1,9 +1,41 @@
 import { useEffect, useRef, useState } from 'react';
-import { AlertCircle, Bot, Check, Copy, RotateCcw, Send, User } from 'lucide-react';
+import { AlertCircle, Bot, Check, Copy, Maximize2, Minimize2, RefreshCw, RotateCcw, Send, Square, User } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
+// PrismLight + explicit language registration instead of the full Prism build —
+// the default import ships every Prism grammar (~600 kB of bundle for languages
+// the tutor will never emit).
+import { PrismLight as SyntaxHighlighter } from 'react-syntax-highlighter';
+import jsx from 'react-syntax-highlighter/dist/esm/languages/prism/jsx';
+import tsx from 'react-syntax-highlighter/dist/esm/languages/prism/tsx';
+import javascript from 'react-syntax-highlighter/dist/esm/languages/prism/javascript';
+import typescript from 'react-syntax-highlighter/dist/esm/languages/prism/typescript';
+import java from 'react-syntax-highlighter/dist/esm/languages/prism/java';
+import python from 'react-syntax-highlighter/dist/esm/languages/prism/python';
+import c from 'react-syntax-highlighter/dist/esm/languages/prism/c';
+import cpp from 'react-syntax-highlighter/dist/esm/languages/prism/cpp';
+import csharp from 'react-syntax-highlighter/dist/esm/languages/prism/csharp';
+import go from 'react-syntax-highlighter/dist/esm/languages/prism/go';
+import rust from 'react-syntax-highlighter/dist/esm/languages/prism/rust';
+import php from 'react-syntax-highlighter/dist/esm/languages/prism/php';
+import ruby from 'react-syntax-highlighter/dist/esm/languages/prism/ruby';
+import kotlin from 'react-syntax-highlighter/dist/esm/languages/prism/kotlin';
+import swift from 'react-syntax-highlighter/dist/esm/languages/prism/swift';
+import sql from 'react-syntax-highlighter/dist/esm/languages/prism/sql';
+import bash from 'react-syntax-highlighter/dist/esm/languages/prism/bash';
+import json from 'react-syntax-highlighter/dist/esm/languages/prism/json';
 import { streamTutorMessage } from '../../services/api';
+
+(
+  [
+    ['jsx', jsx], ['tsx', tsx], ['javascript', javascript], ['js', javascript],
+    ['typescript', typescript], ['ts', typescript], ['java', java],
+    ['python', python], ['py', python], ['c', c], ['cpp', cpp], ['c++', cpp],
+    ['csharp', csharp], ['cs', csharp], ['go', go], ['rust', rust], ['php', php],
+    ['ruby', ruby], ['kotlin', kotlin], ['swift', swift], ['sql', sql],
+    ['bash', bash], ['sh', bash], ['shell', bash], ['json', json],
+  ] as const
+).forEach(([name, lang]) => SyntaxHighlighter.registerLanguage(name, lang));
 
 // ── Custom dark theme matching the app palette ──────────────────────────────
 const codeTheme: Record<string, React.CSSProperties> = {
@@ -127,6 +159,9 @@ interface ChatWindowProps {
   compact?: boolean;
   initialMessages?: Message[];
   showQuickPrompts?: boolean;
+  /** When provided, shows an expand/shrink toggle in the header. */
+  expanded?: boolean;
+  onToggleExpand?: () => void;
 }
 
 const friendlyStreamError = (message: string) => {
@@ -143,6 +178,16 @@ const friendlyStreamError = (message: string) => {
   return message || 'The AI coach could not answer right now. Retry with a shorter question.';
 };
 
+const loadSessionMessages = (storageKey: string, initialMessages?: Message[]): Message[] => {
+  const saved = sessionStorage.getItem(storageKey);
+  const fallbackMessages = initialMessages?.length ? initialMessages : DEFAULT_MESSAGES;
+  if (!saved) return fallbackMessages;
+  try {
+    const parsed = JSON.parse(saved) as Message[];
+    return parsed.length ? parsed : fallbackMessages;
+  } catch { return fallbackMessages; }
+};
+
 export default function ChatWindow({
   sessionId,
   queuedPrompt = '',
@@ -150,26 +195,54 @@ export default function ChatWindow({
   compact = false,
   initialMessages,
   showQuickPrompts = true,
+  expanded = false,
+  onToggleExpand,
 }: ChatWindowProps) {
   const storageKey = `codequest_chat_${sessionId}`;
-  const [messages, setMessages] = useState<Message[]>(() => {
-    const saved = sessionStorage.getItem(storageKey);
-    const fallbackMessages = initialMessages?.length ? initialMessages : DEFAULT_MESSAGES;
-    if (!saved) return fallbackMessages;
-    try {
-      const parsed = JSON.parse(saved) as Message[];
-      return parsed.length ? parsed : fallbackMessages;
-    } catch { return fallbackMessages; }
-  });
+  const [messages, setMessages] = useState<Message[]>(() => loadSessionMessages(storageKey, initialMessages));
   const [input, setInput]               = useState('');
   const [streaming, setStreaming]       = useState(false);
   const [lastFailedPrompt, setLastFailed] = useState('');
+  const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
   const bottomRef    = useRef<HTMLDivElement>(null);
+  const scrollRef    = useRef<HTMLDivElement>(null);
+  const pinnedRef    = useRef(true);
   const textareaRef  = useRef<HTMLTextAreaElement>(null);
   const abortRef     = useRef<AbortController | null>(null);
+  const mountedKeyRef = useRef(storageKey);
+  const justSwitchedRef = useRef(false);
 
-  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
+  // The same ChatWindow instance is reused across tutorials/nodes with a new
+  // sessionId. useState's initializer only runs once, so without this reload the
+  // previous session's messages would carry over AND get saved under the new key.
   useEffect(() => {
+    if (mountedKeyRef.current === storageKey) return;
+    mountedKeyRef.current = storageKey;
+    justSwitchedRef.current = true;
+    abortRef.current?.abort();
+    abortRef.current = null;
+    setStreaming(false);
+    setLastFailed('');
+    setInput('');
+    pinnedRef.current = true;
+    setMessages(loadSessionMessages(storageKey, initialMessages));
+    // initialMessages identity changes every render; keyed by storageKey on purpose.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [storageKey]);
+
+  // Auto-scroll only while the reader is pinned to the bottom. Streaming updates
+  // arrive many times per second — a smooth scrollIntoView on each chunk fights
+  // anyone who scrolled up to re-read an earlier hint.
+  useEffect(() => {
+    if (pinnedRef.current) bottomRef.current?.scrollIntoView({ behavior: 'auto' });
+  }, [messages]);
+  useEffect(() => {
+    // On a session switch this effect still sees the OLD messages with the NEW
+    // key for one commit — skip that save; the post-load render saves correctly.
+    if (justSwitchedRef.current) {
+      justSwitchedRef.current = false;
+      return;
+    }
     const serializable = messages.filter(m => !m.streaming).slice(-24);
     sessionStorage.setItem(storageKey, JSON.stringify(serializable));
   }, [messages, storageKey]);
@@ -181,19 +254,7 @@ export default function ChatWindow({
   }, [input]);
   useEffect(() => () => abortRef.current?.abort(), []);
 
-  const send = (draft?: string) => {
-    const text = (draft ?? input).trim();
-    if (!text || streaming) return;
-    abortRef.current?.abort();
-    const controller = new AbortController();
-    abortRef.current = controller;
-    const userId = `${Date.now()}-user`;
-    const aiId   = `${Date.now()}-assistant`;
-    setMessages(prev => [...prev,
-      { id: userId, role: 'user', content: text },
-      { id: aiId,   role: 'assistant', content: '', streaming: true },
-    ]);
-    setInput('');
+  const streamReply = (aiId: string, text: string, controller: AbortController) => {
     setLastFailed('');
     setStreaming(true);
     void streamTutorMessage(sessionId, text,
@@ -208,6 +269,52 @@ export default function ChatWindow({
       },
       controller.signal
     );
+  };
+
+  const send = (draft?: string) => {
+    const text = (draft ?? input).trim();
+    if (!text || streaming) return;
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+    const userId = `${Date.now()}-user`;
+    const aiId   = `${Date.now()}-assistant`;
+    setMessages(prev => [...prev,
+      { id: userId, role: 'user', content: text },
+      { id: aiId,   role: 'assistant', content: '', streaming: true },
+    ]);
+    setInput('');
+    pinnedRef.current = true;
+    streamReply(aiId, text, controller);
+  };
+
+  // Re-ask the last user question, replacing the previous answer — useful when
+  // the coach's reply was cut off, too vague, or the connection hiccuped.
+  const regenerate = () => {
+    if (streaming) return;
+    const lastUser = [...messages].reverse().find(m => m.role === 'user');
+    if (!lastUser) return;
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+    const aiId = `${Date.now()}-assistant`;
+    setMessages(prev => {
+      const trimmed = prev.length && prev[prev.length - 1].role === 'assistant' ? prev.slice(0, -1) : prev;
+      return [...trimmed, { id: aiId, role: 'assistant', content: '', streaming: true }];
+    });
+    pinnedRef.current = true;
+    streamReply(aiId, lastUser.content, controller);
+  };
+
+  const stopStreaming = () => {
+    abortRef.current?.abort();
+    abortRef.current = null;
+    // The stream's callbacks won't fire after abort — finalize the message here
+    // so it isn't stuck in the "streaming" state with the input locked.
+    setMessages(prev => prev.map(m => (
+      m.streaming ? { ...m, streaming: false, content: m.content || '_Stopped._' } : m
+    )));
+    setStreaming(false);
   };
 
   const clearChat = () => {
@@ -249,70 +356,121 @@ export default function ChatWindow({
             </p>
           </div>
         </div>
-        <button
-          onClick={clearChat}
-          title="Clear chat"
-          className="flex h-7 w-7 items-center justify-center rounded-lg text-[#536D84] transition-all hover:bg-white/[0.05] hover:text-[#8BA4BC]"
-        >
-          <RotateCcw size={12} />
-        </button>
+        <div className="flex items-center gap-1">
+          {onToggleExpand && (
+            <button
+              onClick={onToggleExpand}
+              title={expanded ? 'Shrink chat' : 'Expand chat'}
+              className="flex h-7 w-7 items-center justify-center rounded-lg text-[#536D84] transition-all hover:bg-white/[0.05] hover:text-[#8BA4BC]"
+            >
+              {expanded ? <Minimize2 size={12} /> : <Maximize2 size={12} />}
+            </button>
+          )}
+          <button
+            onClick={clearChat}
+            title="Clear chat"
+            className="flex h-7 w-7 items-center justify-center rounded-lg text-[#536D84] transition-all hover:bg-white/[0.05] hover:text-[#8BA4BC]"
+          >
+            <RotateCcw size={12} />
+          </button>
+        </div>
       </header>
 
       {/* ── Messages ── */}
-      <div className={`flex-1 overflow-y-auto ${compact ? 'space-y-3 px-3 py-3' : 'space-y-5 px-4 py-4'}`}>
-        {messages.map(message => (
-          <div key={message.id} className={`flex items-start gap-2.5 ${message.role === 'user' ? 'flex-row-reverse' : ''}`}>
-            {/* Avatar */}
-            <div
-              className="mt-0.5 flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-xl text-[11px] font-bold"
-              style={message.role === 'assistant'
-                ? { background: 'rgba(18,232,176,0.08)', border: '1px solid rgba(18,232,176,0.12)', color: '#12E8B0' }
-                : { background: 'rgba(79,190,255,0.08)', border: '1px solid rgba(79,190,255,0.12)', color: '#4FBEFF' }
-              }
-            >
-              {message.role === 'assistant' ? <Bot size={13} /> : <User size={13} />}
-            </div>
+      <div
+        ref={scrollRef}
+        onScroll={() => {
+          const el = scrollRef.current;
+          if (!el) return;
+          pinnedRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+        }}
+        className={`flex-1 overflow-y-auto ${compact ? 'space-y-3 px-3 py-3' : 'space-y-5 px-4 py-4'}`}
+      >
+        {messages.map((message, index) => {
+          const isLastAssistant = message.role === 'assistant'
+            && !message.streaming
+            && index === messages.length - 1
+            && messages.some(m => m.role === 'user');
+          return (
+            <div key={message.id} className={`flex items-start gap-2.5 ${message.role === 'user' ? 'flex-row-reverse' : ''}`}>
+              {/* Avatar */}
+              <div
+                className="mt-0.5 flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-xl text-[11px] font-bold"
+                style={message.role === 'assistant'
+                  ? { background: 'rgba(18,232,176,0.08)', border: '1px solid rgba(18,232,176,0.12)', color: '#12E8B0' }
+                  : { background: 'rgba(79,190,255,0.08)', border: '1px solid rgba(79,190,255,0.12)', color: '#4FBEFF' }
+                }
+              >
+                {message.role === 'assistant' ? <Bot size={13} /> : <User size={13} />}
+              </div>
 
-            {/* Bubble */}
-            <div
-              className={`relative max-w-[90%] rounded-2xl break-words ${compact ? 'px-3 py-2.5 text-[12px] leading-6' : 'px-3.5 py-3 text-[13px] leading-7'}`}
-              style={message.role === 'assistant'
-                ? {
-                    background: 'rgba(14,24,44,0.90)',
-                    border: '1px solid rgba(255,255,255,0.055)',
-                    borderTopLeftRadius: 6,
-                    boxShadow: '0 4px 12px rgba(3,8,16,0.3)',
-                    color: '#C8D8EA',
+              <div className={`flex max-w-[90%] min-w-0 flex-col ${message.role === 'user' ? 'items-end' : 'items-start'}`}>
+                {/* Bubble */}
+                <div
+                  className={`relative w-fit max-w-full rounded-2xl break-words ${compact ? 'px-3 py-2.5 text-[12px] leading-6' : 'px-3.5 py-3 text-[13px] leading-7'}`}
+                  style={message.role === 'assistant'
+                    ? {
+                        background: 'rgba(14,24,44,0.90)',
+                        border: '1px solid rgba(255,255,255,0.055)',
+                        borderTopLeftRadius: 6,
+                        boxShadow: '0 4px 12px rgba(3,8,16,0.3)',
+                        color: '#C8D8EA',
+                      }
+                    : {
+                        background: 'linear-gradient(160deg, rgba(22,50,88,0.95) 0%, rgba(16,38,68,0.92) 100%)',
+                        border: '1px solid rgba(79,190,255,0.15)',
+                        borderTopRightRadius: 6,
+                        boxShadow: '0 4px 12px rgba(3,8,16,0.3)',
+                        color: '#D8EEFF',
+                      }
                   }
-                : {
-                    background: 'linear-gradient(160deg, rgba(22,50,88,0.95) 0%, rgba(16,38,68,0.92) 100%)',
-                    border: '1px solid rgba(79,190,255,0.15)',
-                    borderTopRightRadius: 6,
-                    boxShadow: '0 4px 12px rgba(3,8,16,0.3)',
-                    color: '#D8EEFF',
-                  }
-              }
-            >
-              {message.role === 'assistant' && !message.streaming ? (
-                <MarkdownMessage content={message.content} />
-              ) : message.streaming && !message.content ? (
-                <span className="inline-flex items-center gap-1 py-1">
-                  {[0, 150, 300].map(delay => (
-                    <span key={delay} className="h-1.5 w-1.5 rounded-full bg-[#12E8B0] animate-bounce"
-                      style={{ animationDelay: `${delay}ms` }} />
-                  ))}
-                </span>
-              ) : (
-                <span className="block">
-                  <MarkdownMessage content={message.content} />
-                  {message.streaming && (
-                    <span className="ml-0.5 inline-block h-3.5 w-px animate-pulse bg-[#12E8B0] align-middle" />
+                >
+                  {message.role === 'assistant' && !message.streaming ? (
+                    <MarkdownMessage content={message.content} />
+                  ) : message.streaming && !message.content ? (
+                    <span className="inline-flex items-center gap-1 py-1">
+                      {[0, 150, 300].map(delay => (
+                        <span key={delay} className="h-1.5 w-1.5 rounded-full bg-[#12E8B0] animate-bounce"
+                          style={{ animationDelay: `${delay}ms` }} />
+                      ))}
+                    </span>
+                  ) : (
+                    <span className="block">
+                      <MarkdownMessage content={message.content} />
+                      {message.streaming && (
+                        <span className="ml-0.5 inline-block h-3.5 w-px animate-pulse bg-[#12E8B0] align-middle" />
+                      )}
+                    </span>
                   )}
-                </span>
-              )}
+                </div>
+
+                {/* Actions under the latest answer */}
+                {isLastAssistant && (
+                  <div className="mt-1.5 flex items-center gap-1">
+                    <button
+                      onClick={() => {
+                        void navigator.clipboard.writeText(message.content).then(() => {
+                          setCopiedMessageId(message.id);
+                          setTimeout(() => setCopiedMessageId(null), 1800);
+                        });
+                      }}
+                      className="flex items-center gap-1 rounded-md px-1.5 py-1 text-[10px] font-semibold transition-colors hover:bg-white/[0.05]"
+                      style={{ color: copiedMessageId === message.id ? '#12E8B0' : '#536D84' }}
+                    >
+                      {copiedMessageId === message.id ? <><Check size={10} /> Copied</> : <><Copy size={10} /> Copy</>}
+                    </button>
+                    <button
+                      onClick={regenerate}
+                      className="flex items-center gap-1 rounded-md px-1.5 py-1 text-[10px] font-semibold text-[#536D84] transition-colors hover:bg-white/[0.05] hover:text-[#8BA4BC]"
+                    >
+                      <RefreshCw size={10} /> Regenerate
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
         <div ref={bottomRef} />
       </div>
 
@@ -367,19 +525,34 @@ export default function ChatWindow({
           onFocus={e => { e.currentTarget.style.borderColor = 'rgba(18,232,176,0.25)'; e.currentTarget.style.boxShadow = '0 0 0 1px rgba(18,232,176,0.10)'; }}
           onBlur={e  => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.07)'; e.currentTarget.style.boxShadow = 'none'; }}
         />
-        <button
-          onClick={() => send()}
-          disabled={!input.trim() || streaming}
-          className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl text-[#030C16] transition-all duration-150 hover:-translate-y-px active:scale-[0.95] disabled:cursor-not-allowed disabled:opacity-35"
-          style={{
-            background: input.trim() && !streaming
-              ? 'linear-gradient(135deg, #12E8B0 0%, #0EC897 100%)'
-              : 'rgba(18,232,176,0.15)',
-            color: input.trim() && !streaming ? '#030C16' : '#12E8B0',
-          }}
-        >
-          <Send size={14} />
-        </button>
+        {streaming ? (
+          <button
+            onClick={stopStreaming}
+            title="Stop generating"
+            className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl transition-all duration-150 hover:-translate-y-px active:scale-[0.95]"
+            style={{
+              background: 'rgba(255,92,114,0.12)',
+              border: '1px solid rgba(255,92,114,0.25)',
+              color: '#FF5C72',
+            }}
+          >
+            <Square size={12} fill="currentColor" />
+          </button>
+        ) : (
+          <button
+            onClick={() => send()}
+            disabled={!input.trim()}
+            className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl text-[#030C16] transition-all duration-150 hover:-translate-y-px active:scale-[0.95] disabled:cursor-not-allowed disabled:opacity-35"
+            style={{
+              background: input.trim()
+                ? 'linear-gradient(135deg, #12E8B0 0%, #0EC897 100%)'
+                : 'rgba(18,232,176,0.15)',
+              color: input.trim() ? '#030C16' : '#12E8B0',
+            }}
+          >
+            <Send size={14} />
+          </button>
+        )}
       </div>
     </div>
   );

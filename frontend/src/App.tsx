@@ -143,6 +143,7 @@ export default function App() {
   const [assignments, setAssignments] = useState<AssignmentResponse[]>([]);
   const [drawer, setDrawer] = useState<SideDrawer>(null);
   const [workspace, setWorkspace] = useState<Workspace>('path');
+  const [chatWide, setChatWide] = useState(false);
 
   const requestSerialRef = useRef(0);
   const humanLanguage = player?.preferredLanguage ?? navigator.language.split('-')[0] ?? 'en';
@@ -397,6 +398,9 @@ export default function App() {
       setLeaderboard(refreshedLeaderboard);
       setChallenge(null);
       setChallengeReason('');
+      // The persistence effect only writes while a challenge exists, so without
+      // this removal the finished challenge would be restored on the next reload.
+      if (challengeStorageKey) sessionStorage.removeItem(challengeStorageKey);
       setWorkspace('path');
       setPhase('ready');
       toast.success('Node practice complete. Continue from the learning path.');
@@ -549,8 +553,8 @@ export default function App() {
           )}
 
           {workspace === 'practice' && (
-            <main className="flex flex-1 gap-4 overflow-hidden p-4">
-              <section className="flex flex-1 flex-col overflow-hidden rounded-2xl border border-app-border bg-bg-1 shadow-sm">
+            <main className="flex flex-1 flex-col gap-4 overflow-y-auto p-4 lg:flex-row lg:overflow-hidden">
+              <section className="flex flex-col overflow-hidden rounded-2xl border border-app-border bg-bg-1 shadow-sm lg:flex-1">
                 {phase === 'error' && (
                   <div className="mx-4 mt-4 rounded-xl border border-danger/30 bg-danger/10 px-4 py-3 text-sm text-danger">
                     {phaseError || 'Something went wrong.'}
@@ -584,11 +588,13 @@ export default function App() {
                 </div>
               </section>
 
-              <aside className="flex w-[400px] flex-shrink-0 flex-col overflow-hidden rounded-2xl border border-app-border bg-bg-1 shadow-sm">
+              <aside className={`flex h-[480px] w-full flex-shrink-0 flex-col overflow-hidden rounded-2xl border border-app-border bg-bg-1 shadow-sm transition-[width] duration-200 lg:h-auto ${chatWide ? 'lg:w-[620px]' : 'lg:w-[400px]'}`}>
                 <ChatWindow
                   sessionId={tutorSessionId}
                   queuedPrompt={queuedTutorPrompt}
                   onQueuedPromptSent={() => setQueuedTutorPrompt('')}
+                  expanded={chatWide}
+                  onToggleExpand={() => setChatWide(v => !v)}
                 />
               </aside>
             </main>
@@ -1092,6 +1098,8 @@ function LearningPathContent({
   const [selectedVideoId, setSelectedVideoId] = useState<string | null>(null);
   const [pathCoachPrompt, setPathCoachPrompt] = useState('');
   const [lessonPanel, setLessonPanel] = useState<'info' | 'quiz' | 'coach'>('info');
+  const [wrongChoices, setWrongChoices] = useState<Record<string, number>>({});
+  const lastActiveNodeRef = useRef(progression.activeNodeId);
 
   useEffect(() => {
     setPathProgress(loadPathProgressState(player.id));
@@ -1101,12 +1109,25 @@ function LearningPathContent({
     savePathProgressState(player.id, pathProgress);
   }, [player.id, pathProgress]);
 
+  // When a practice mission completes, the backend advances activeNodeId. Follow
+  // it: land the learner on the newly unlocked lesson instead of leaving the
+  // selection stuck on the node they just finished.
+  useEffect(() => {
+    if (progression.activeNodeId && progression.activeNodeId !== lastActiveNodeRef.current) {
+      lastActiveNodeRef.current = progression.activeNodeId;
+      setSelectedNodeId(progression.activeNodeId);
+    }
+  }, [progression.activeNodeId]);
+
   useEffect(() => {
     setSelectedVideoId(selectedContent?.videos[0]?.id ?? null);
+    // selectedContent derives from selectedNode; keyed by node on purpose.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedNode?.nodeId]);
 
   useEffect(() => {
     setLessonPanel('info');
+    setWrongChoices({});
   }, [selectedNode?.nodeId, selectedVideoId]);
 
   if (!selectedNode || !selectedContent) {
@@ -1186,8 +1207,17 @@ function LearningPathContent({
   };
 
   const handleAnswerQuiz = (questionId: string, selectedIndex: number, correctIndex: number) => {
+    // Once a question is passed, further clicks must not overwrite the score —
+    // re-answering wrong would silently re-lock practice.
+    if ((nodeProgress.exerciseAttempts[questionId]?.score ?? 0) >= 80) return;
     const correct = selectedIndex === correctIndex;
     setPathProgress(current => scoreExercise(current, selectedNode.nodeId, questionId, correct ? 100 : 30));
+    setWrongChoices(current => {
+      const next = { ...current };
+      if (correct) delete next[questionId];
+      else next[questionId] = selectedIndex;
+      return next;
+    });
     const willPassAll = correct && selectedVideo.quiz.every(question => (
       question.id === questionId
         ? true
@@ -1204,23 +1234,33 @@ function LearningPathContent({
       return;
     }
 
-    setPathProgress(current => {
-      const quizContent = {
-        ...selectedContent,
-        exercises: selectedVideo.quiz.map(question => ({
-          id: question.id,
-          type: 'multiple_choice' as const,
-          title: question.question,
-          prompt: question.question,
-          reviewPrompt: question.explanation,
-          estimatedMinutes: 1,
-        })),
-      };
-      const { state, result } = completeNodeLearningSession(current, selectedNode, quizContent);
-      toast.success(`${result.score}% mastery saved. Practice mission unlocked.`);
-      return state;
-    });
+    const quizContent = {
+      ...selectedContent,
+      exercises: selectedVideo.quiz.map(question => ({
+        id: question.id,
+        type: 'multiple_choice' as const,
+        title: question.question,
+        prompt: question.question,
+        reviewPrompt: question.explanation,
+        estimatedMinutes: 1,
+      })),
+    };
+    // Compute outside the updater: side effects (toasts) inside setState updaters
+    // fire twice under StrictMode.
+    const { state, result } = completeNodeLearningSession(pathProgress, selectedNode, quizContent);
+    setPathProgress(state);
+    toast.success(`${result.score}% mastery saved. Practice mission unlocked.`);
   };
+
+  // Auto-save the lesson checkpoint the moment the gate conditions are met.
+  // Asking learners to press a separate "Save quiz result" button after already
+  // passing the quiz was pure friction — most never understood why practice
+  // stayed locked. The button remains as a visible confirmation state.
+  useEffect(() => {
+    if (canCompleteLearning && !nodeProgress.completedAt) handleCompleteLearning();
+    // handleCompleteLearning is recreated per render; the guard makes this safe.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canCompleteLearning, nodeProgress.completedAt]);
 
   const handleStartPractice = () => {
     if (selectedNode.status === 'LOCKED') {
@@ -1328,11 +1368,8 @@ function LearningPathContent({
         </div>
       </div>
 
-      <section className="min-h-0 flex-1 overflow-x-auto overflow-y-hidden">
-        <div
-          className="grid h-full min-h-0 min-w-[930px] gap-4"
-          style={{ gridTemplateColumns: 'minmax(0, 1fr) 390px' }}
-        >
+      <section className="min-h-0 flex-1 lg:overflow-hidden">
+        <div className="grid gap-4 lg:h-full lg:min-h-0 lg:[grid-template-columns:minmax(0,1fr)_390px]">
           <article className="flex min-h-0 flex-col overflow-hidden rounded-xl border border-app-border bg-bg-2">
             <div className="flex flex-shrink-0 items-center justify-between border-b border-app-border px-4 py-3">
               <div>
@@ -1342,7 +1379,7 @@ function LearningPathContent({
               <Youtube size={18} className="text-danger" />
             </div>
             <div className="flex min-h-0 flex-1 flex-col p-4">
-              <div className="min-h-0 flex-1 overflow-hidden rounded-xl border border-app-border bg-black">
+              <div className="aspect-video w-full overflow-hidden rounded-xl border border-app-border bg-black lg:aspect-auto lg:min-h-0 lg:flex-1">
                 <iframe
                   key={selectedVideo.videoId}
                   src={buildYoutubeEmbedUrl(selectedVideo.videoId)}
@@ -1429,6 +1466,15 @@ function LearningPathContent({
                         <span key={idea} className="tag max-w-full truncate">{idea}</span>
                       ))}
                     </div>
+                    <a
+                      href={buildYoutubeSearchUrl(selectedVideo.searchQuery)}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="mt-3 inline-flex items-center gap-1.5 text-[11px] font-semibold text-info transition-colors hover:text-info/80"
+                    >
+                      <ArrowUpRight size={12} />
+                      Find more {player.programmingLanguage} tutorials on YouTube
+                    </a>
                   </div>
                 </div>
 
@@ -1518,19 +1564,29 @@ function LearningPathContent({
                       <div key={question.id} className="rounded-xl border border-app-border bg-bg-1 p-3">
                         <p className="text-[13px] font-semibold leading-5 text-ink">{questionIndex + 1}. {question.question}</p>
                         <div className="mt-2 grid gap-2">
-                          {question.choices.map((choice, choiceIndex) => (
-                            <button
-                              key={choice}
-                              onClick={() => handleAnswerQuiz(question.id, choiceIndex, question.correctIndex)}
-                              className={`rounded-lg border px-3 py-2 text-left text-[12px] leading-5 transition-colors ${
-                                correct && choiceIndex === question.correctIndex
-                                  ? 'border-accent/40 bg-accent/10 text-accent'
-                                  : 'border-app-border bg-bg-2 text-ink-muted hover:border-info/40 hover:text-info'
-                              }`}
-                            >
-                              {choice}
-                            </button>
-                          ))}
+                          {question.choices.map((choice, choiceIndex) => {
+                            const isCorrectChoice = correct && choiceIndex === question.correctIndex;
+                            const isWrongPick = !correct && wrongChoices[question.id] === choiceIndex;
+                            return (
+                              <button
+                                key={choice}
+                                onClick={() => handleAnswerQuiz(question.id, choiceIndex, question.correctIndex)}
+                                disabled={correct}
+                                aria-pressed={isCorrectChoice || isWrongPick}
+                                className={`rounded-lg border px-3 py-2 text-left text-[12px] leading-5 transition-colors ${
+                                  isCorrectChoice
+                                    ? 'border-accent/40 bg-accent/10 text-accent'
+                                    : isWrongPick
+                                      ? 'border-danger/40 bg-danger/10 text-danger'
+                                      : correct
+                                        ? 'border-app-border bg-bg-2 text-ink-subtle opacity-60'
+                                        : 'border-app-border bg-bg-2 text-ink-muted hover:border-info/40 hover:text-info'
+                                }`}
+                              >
+                                {choice}
+                              </button>
+                            );
+                          })}
                         </div>
                         {answered && (
                           <div className="mt-2">
@@ -1577,7 +1633,7 @@ function LearningPathContent({
             )}
 
             {lessonPanel === 'coach' && (
-              <div className="flex min-h-0 flex-1 flex-col p-3">
+              <div className="flex min-h-[480px] flex-1 flex-col p-3 lg:min-h-0">
                 <div className="mb-2 flex-shrink-0 rounded-xl border border-app-border bg-bg-1 p-3">
                   <p className="text-[12px] font-semibold text-ink">AI help for this tutorial</p>
                   <p className="mt-1.5 text-[12px] leading-5 text-ink-muted">

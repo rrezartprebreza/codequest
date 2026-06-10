@@ -91,9 +91,21 @@ const doRefresh = async (): Promise<string> => {
 
 type RetriableConfig = AxiosRequestConfig & { _retry?: boolean };
 
+// 401 from these endpoints means "bad credentials", not "session expired" —
+// firing the global auth-expired event here would flash a misleading
+// "session expired" toast at someone who just mistyped their password.
+const isCredentialEndpoint = (url?: string): boolean => {
+  if (!url) return false;
+  return url.endsWith('/players/login') || url.endsWith('/players') || url.includes('/auth/');
+};
+
 const handleResponseError = async (error: AxiosError): Promise<unknown> => {
   const status   = error.response?.status;
   const original = error.config as RetriableConfig | undefined;
+
+  if (status === 401 && isCredentialEndpoint(original?.url)) {
+    return Promise.reject(error);
+  }
 
   // Only retry once, only on 401, only when we still have a refresh token.
   if (status !== 401 || !original || original._retry || !getRefreshToken()) {
@@ -709,25 +721,44 @@ export const streamTutorMessage = (
     const decoder = new TextDecoder();
     let buffer = '';
 
-    const emitLine = (rawLine: string) => {
+    // SSE spec: one event may carry SEVERAL `data:` lines, which the client must
+    // join with "\n". The backend streams Flux<String>, so any model chunk that
+    // contains a newline (blank lines between paragraphs, code fences) arrives as
+    // multiple data: lines in one event. Emitting each line separately silently
+    // strips every newline — markdown paragraphs and ``` blocks collapse.
+    let eventData: string[] = [];
+    let eventHasData = false;
+
+    const flushEvent = () => {
+      if (!eventHasData) return;
+      const payload = eventData.join('\n');
+      eventData = [];
+      eventHasData = false;
+      if (payload.trim() === '[DONE]') return;
+      onChunk(payload);
+    };
+
+    const handleLine = (rawLine: string) => {
       const line = rawLine.replace(/\r$/, '');
-      if (!line || line.startsWith(':')) return;
+      if (line.startsWith(':')) return;          // comment / keep-alive
+      if (!line) { flushEvent(); return; }       // blank line = end of event
 
       if (line.startsWith('data:')) {
-        const payload = line.slice(5);
-        if (payload.trim() === '[DONE]') return;
         // Do not strip leading spaces; some models stream them as word boundaries.
-        onChunk(payload);
+        eventData.push(line.slice(5));
+        eventHasData = true;
         return;
       }
 
+      // Non-SSE line (plain text fallback) — emit as-is.
       onChunk(line);
     };
 
     while (true) {
       const { done, value } = await reader.read();
       if (done) {
-        if (buffer) emitLine(buffer);
+        if (buffer) handleLine(buffer);
+        flushEvent();
         onDone();
         break;
       }
@@ -735,7 +766,7 @@ export const streamTutorMessage = (
       buffer += decoder.decode(value, { stream: true });
       const lines = buffer.split(/\r?\n/);
       buffer = lines.pop() ?? '';
-      lines.forEach(emitLine);
+      lines.forEach(handleLine);
     }
   }).catch((error: unknown) => {
     if (error instanceof DOMException && error.name === 'AbortError') {

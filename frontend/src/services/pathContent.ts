@@ -88,6 +88,18 @@ const LANGUAGE_VIDEO_IDS: Record<string, string> = {
   c: 'KJgsSFOSQv0',
 };
 
+// Curated language × topic picks. The selection chain is:
+//   1. LANGUAGE_TOPIC_VIDEO_IDS[lang][topic]  — exact match (best)
+//   2. LANGUAGE_VIDEO_IDS[lang]               — full language course (anchor)
+//   3. TOPIC_VIDEO_IDS[topic]                 — generic topic video (last resort)
+// Add entries here as they are curated — no code changes needed. Topic keys
+// must match the node topics: variables, if statements, loops, functions,
+// arrays, strings, null handling, async, tests, debugging.
+const LANGUAGE_TOPIC_VIDEO_IDS: Record<string, Record<string, string>> = {
+  // example shape (fill with curated, verified IDs):
+  // python: { loops: '<videoId>', functions: '<videoId>' },
+};
+
 const LANGUAGE_LABELS: Record<string, string> = {
   javascript: 'JavaScript',
   typescript: 'TypeScript',
@@ -451,9 +463,16 @@ export function buildNodeLearningContent(
   const level = LEVEL_LABELS[node.difficulty];
   const mode = MODE_LABELS[node.practiceMode];
   const { key: languageKey, label: language } = normalizeLanguage(programmingLanguage);
+  const topicKey = node.topic.toLowerCase();
+  const languageTopicVideoId = LANGUAGE_TOPIC_VIDEO_IDS[languageKey]?.[topicKey];
   const languageVideoId = LANGUAGE_VIDEO_IDS[languageKey];
-  const topicVideoId = TOPIC_VIDEO_IDS[node.topic.toLowerCase()] ?? TOPIC_VIDEO_IDS.debugging;
-  const primaryVideoId = languageVideoId ?? topicVideoId;
+  const topicVideoId = TOPIC_VIDEO_IDS[topicKey] ?? TOPIC_VIDEO_IDS.debugging;
+  const primaryVideoId = languageTopicVideoId ?? languageVideoId ?? topicVideoId;
+  // The reinforcement slot must show DIFFERENT content from the core slot —
+  // previously a learner whose language had a course video got that same video
+  // as both "core" and "reinforce" on every node of the path.
+  const reinforceVideoId = [topicVideoId, languageVideoId, TOPIC_VIDEO_IDS.debugging]
+    .find(id => id && id !== primaryVideoId) ?? topicVideoId;
   const attemptsForTopic = learningState.attempts.filter(attempt =>
     attempt.categories.some(category => node.topic.toLowerCase().includes(category))
   ).length;
@@ -464,8 +483,10 @@ export function buildNodeLearningContent(
       id: `${node.nodeId}-core`,
       videoId: primaryVideoId,
       title: `${node.title} in ${language}`,
-      channelHint: languageVideoId ? 'Language-specific tutorial' : VIDEO_SOURCES.slice(0, 3).join(', '),
-      durationHint: languageVideoId ? 'Full course section' : level === 'beginner' ? '8-15 min' : '12-25 min',
+      channelHint: (languageTopicVideoId || languageVideoId) ? 'Language-specific tutorial' : VIDEO_SOURCES.slice(0, 3).join(', '),
+      durationHint: languageTopicVideoId
+        ? level === 'beginner' ? '8-15 min' : '12-25 min'
+        : languageVideoId ? 'Full course section' : level === 'beginner' ? '8-15 min' : '12-25 min',
       searchQuery: `${language} ${node.topic} ${level} tutorial debugging examples`,
       reason: `Primary video for the active ${node.topic} node, selected around ${mode}.`,
       ...buildVideoExplanation(node, concept, 'core', language, mode),
@@ -474,7 +495,7 @@ export function buildNodeLearningContent(
     },
     {
       id: `${node.nodeId}-reinforce`,
-      videoId: languageVideoId ?? topicVideoId,
+      videoId: reinforceVideoId,
       title: `Reinforcement: ${node.topic} mistakes`,
       channelHint: VIDEO_SOURCES.slice(2).join(', '),
       durationHint: '6-12 min',
