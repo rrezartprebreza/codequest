@@ -82,9 +82,27 @@ const LANGUAGE_VIDEO_IDS: Record<string, string> = {
   typescript: 'PkZNo7MFNFg',
   python: 'rfscVS0vtbw',
   java: 'grEKMHGYyns',
+  php: 'OK_JCtrrv-c',
   'c++': 'vLnPwxZdW4Y',
   cpp: 'vLnPwxZdW4Y',
   c: 'KJgsSFOSQv0',
+};
+
+const LANGUAGE_LABELS: Record<string, string> = {
+  javascript: 'JavaScript',
+  typescript: 'TypeScript',
+  python: 'Python',
+  java: 'Java',
+  php: 'PHP',
+  'c#': 'C#',
+  csharp: 'C#',
+  'c++': 'C++',
+  cpp: 'C++',
+  c: 'C',
+  go: 'Go',
+  golang: 'Go',
+  rust: 'Rust',
+  ruby: 'Ruby',
 };
 
 const TOPIC_VIDEO_IDS: Record<string, string> = {
@@ -340,6 +358,15 @@ const topicConcepts: Record<string, {
 
 const fallbackConcept = topicConcepts.debugging;
 
+function normalizeLanguage(language: string): { key: string; label: string } {
+  const raw = (language || 'programming').trim();
+  const key = raw.toLowerCase();
+  return {
+    key,
+    label: LANGUAGE_LABELS[key] ?? raw,
+  };
+}
+
 function buildVideoExplanation(
   node: ProgressionNode,
   concept: typeof fallbackConcept,
@@ -423,9 +450,10 @@ export function buildNodeLearningContent(
   const concept = topicConcepts[node.topic.toLowerCase()] ?? fallbackConcept;
   const level = LEVEL_LABELS[node.difficulty];
   const mode = MODE_LABELS[node.practiceMode];
-  const language = programmingLanguage || 'programming';
-  const languageVideoId = LANGUAGE_VIDEO_IDS[language.toLowerCase()] ?? LANGUAGE_VIDEO_IDS.javascript;
+  const { key: languageKey, label: language } = normalizeLanguage(programmingLanguage);
+  const languageVideoId = LANGUAGE_VIDEO_IDS[languageKey];
   const topicVideoId = TOPIC_VIDEO_IDS[node.topic.toLowerCase()] ?? TOPIC_VIDEO_IDS.debugging;
+  const primaryVideoId = languageVideoId ?? topicVideoId;
   const attemptsForTopic = learningState.attempts.filter(attempt =>
     attempt.categories.some(category => node.topic.toLowerCase().includes(category))
   ).length;
@@ -434,10 +462,10 @@ export function buildNodeLearningContent(
   const videos: VideoResource[] = [
     {
       id: `${node.nodeId}-core`,
-      videoId: topicVideoId,
+      videoId: primaryVideoId,
       title: `${node.title} in ${language}`,
-      channelHint: VIDEO_SOURCES.slice(0, 3).join(', '),
-      durationHint: level === 'beginner' ? '8-15 min' : '12-25 min',
+      channelHint: languageVideoId ? 'Language-specific tutorial' : VIDEO_SOURCES.slice(0, 3).join(', '),
+      durationHint: languageVideoId ? 'Full course section' : level === 'beginner' ? '8-15 min' : '12-25 min',
       searchQuery: `${language} ${node.topic} ${level} tutorial debugging examples`,
       reason: `Primary video for the active ${node.topic} node, selected around ${mode}.`,
       ...buildVideoExplanation(node, concept, 'core', language, mode),
@@ -446,7 +474,7 @@ export function buildNodeLearningContent(
     },
     {
       id: `${node.nodeId}-reinforce`,
-      videoId: languageVideoId,
+      videoId: languageVideoId ?? topicVideoId,
       title: `Reinforcement: ${node.topic} mistakes`,
       channelHint: VIDEO_SOURCES.slice(2).join(', '),
       durationHint: '6-12 min',
