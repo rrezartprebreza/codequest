@@ -124,17 +124,42 @@ interface ChatWindowProps {
   sessionId: string;
   queuedPrompt?: string;
   onQueuedPromptSent?: () => void;
+  compact?: boolean;
+  initialMessages?: Message[];
+  showQuickPrompts?: boolean;
 }
 
-export default function ChatWindow({ sessionId, queuedPrompt = '', onQueuedPromptSent }: ChatWindowProps) {
+const friendlyStreamError = (message: string) => {
+  const lower = message.toLowerCase();
+  if (
+    lower.includes('failed to fetch')
+    || lower.includes('network')
+    || lower.includes('load failed')
+    || lower.includes('timeout')
+    || lower.includes('unknown')
+  ) {
+    return 'The AI coach is not reachable right now. You can still use the lesson summary and quiz, then retry the coach in a moment.';
+  }
+  return message || 'The AI coach could not answer right now. Retry with a shorter question.';
+};
+
+export default function ChatWindow({
+  sessionId,
+  queuedPrompt = '',
+  onQueuedPromptSent,
+  compact = false,
+  initialMessages,
+  showQuickPrompts = true,
+}: ChatWindowProps) {
   const storageKey = `codequest_chat_${sessionId}`;
   const [messages, setMessages] = useState<Message[]>(() => {
     const saved = sessionStorage.getItem(storageKey);
-    if (!saved) return DEFAULT_MESSAGES;
+    const fallbackMessages = initialMessages?.length ? initialMessages : DEFAULT_MESSAGES;
+    if (!saved) return fallbackMessages;
     try {
       const parsed = JSON.parse(saved) as Message[];
-      return parsed.length ? parsed : DEFAULT_MESSAGES;
-    } catch { return DEFAULT_MESSAGES; }
+      return parsed.length ? parsed : fallbackMessages;
+    } catch { return fallbackMessages; }
   });
   const [input, setInput]               = useState('');
   const [streaming, setStreaming]       = useState(false);
@@ -174,14 +199,20 @@ export default function ChatWindow({ sessionId, queuedPrompt = '', onQueuedPromp
     void streamTutorMessage(sessionId, text,
       chunk  => setMessages(prev => prev.map(m => m.id !== aiId ? m : { ...m, content: m.content + chunk })),
       ()     => { abortRef.current = null; setMessages(prev => prev.map(m => m.id !== aiId ? m : { ...m, streaming: false })); setLastFailed(''); setStreaming(false); },
-      error  => { abortRef.current = null; setMessages(prev => prev.map(m => m.id !== aiId ? m : { ...m, content: error.message || 'Stream failed. Try again.', streaming: false })); setLastFailed(text); setStreaming(false); },
+      error  => {
+        abortRef.current = null;
+        const content = friendlyStreamError(error.message);
+        setMessages(prev => prev.map(m => m.id !== aiId ? m : { ...m, content, streaming: false }));
+        setLastFailed(text);
+        setStreaming(false);
+      },
       controller.signal
     );
   };
 
   const clearChat = () => {
     abortRef.current?.abort();
-    setMessages(DEFAULT_MESSAGES);
+    setMessages(initialMessages?.length ? initialMessages : DEFAULT_MESSAGES);
     setLastFailed('');
     setStreaming(false);
     sessionStorage.removeItem(storageKey);
@@ -195,15 +226,15 @@ export default function ChatWindow({ sessionId, queuedPrompt = '', onQueuedPromp
 
   return (
     <div
-      className="flex h-full flex-col overflow-hidden rounded-[24px]"
+      className={`flex h-full flex-col overflow-hidden ${compact ? 'rounded-xl' : 'rounded-[24px]'}`}
       style={{
         background: 'linear-gradient(160deg, rgba(12,22,40,0.97) 0%, rgba(8,15,30,0.96) 100%)',
         border: '1px solid rgba(255,255,255,0.055)',
-        boxShadow: '0 8px 24px rgba(3,8,16,0.4)',
+        boxShadow: compact ? 'none' : '0 8px 24px rgba(3,8,16,0.4)',
       }}
     >
       {/* ── Header ── */}
-      <header className="flex flex-shrink-0 items-center justify-between border-b border-white/[0.05] px-4 py-3">
+      <header className={`flex flex-shrink-0 items-center justify-between border-b border-white/[0.05] ${compact ? 'px-3 py-2.5' : 'px-4 py-3'}`}>
         <div className="flex items-center gap-2.5">
           <div
             className="flex h-8 w-8 items-center justify-center rounded-xl text-[#12E8B0]"
@@ -228,7 +259,7 @@ export default function ChatWindow({ sessionId, queuedPrompt = '', onQueuedPromp
       </header>
 
       {/* ── Messages ── */}
-      <div className="flex-1 space-y-5 overflow-y-auto px-4 py-4">
+      <div className={`flex-1 overflow-y-auto ${compact ? 'space-y-3 px-3 py-3' : 'space-y-5 px-4 py-4'}`}>
         {messages.map(message => (
           <div key={message.id} className={`flex items-start gap-2.5 ${message.role === 'user' ? 'flex-row-reverse' : ''}`}>
             {/* Avatar */}
@@ -244,7 +275,7 @@ export default function ChatWindow({ sessionId, queuedPrompt = '', onQueuedPromp
 
             {/* Bubble */}
             <div
-              className="relative max-w-[90%] rounded-2xl px-3.5 py-3 text-[13px] leading-7 break-words"
+              className={`relative max-w-[90%] rounded-2xl break-words ${compact ? 'px-3 py-2.5 text-[12px] leading-6' : 'px-3.5 py-3 text-[13px] leading-7'}`}
               style={message.role === 'assistant'
                 ? {
                     background: 'rgba(14,24,44,0.90)',
@@ -286,25 +317,27 @@ export default function ChatWindow({ sessionId, queuedPrompt = '', onQueuedPromp
       </div>
 
       {/* ── Quick prompts ── */}
-      <div className="flex flex-shrink-0 gap-1.5 overflow-x-auto border-t border-white/[0.05] px-4 py-2.5 [scrollbar-width:none] [-webkit-scrollbar-display:none]">
-        {QUICK_PROMPTS.map(item => (
-          <button
-            key={item.label}
-            onClick={() => send(item.prompt)}
-            disabled={streaming}
-            className="flex-shrink-0 rounded-lg px-2.5 py-1 text-[11px] font-semibold text-[#536D84] transition-all hover:bg-white/[0.05] hover:text-[#8BA4BC] disabled:opacity-40"
-            style={{ border: '1px solid rgba(255,255,255,0.06)' }}
-          >
-            {item.label}
-          </button>
-        ))}
-      </div>
+      {showQuickPrompts && (
+        <div className="flex flex-shrink-0 gap-1.5 overflow-x-auto border-t border-white/[0.05] px-4 py-2.5 [scrollbar-width:none] [-webkit-scrollbar-display:none]">
+          {QUICK_PROMPTS.map(item => (
+            <button
+              key={item.label}
+              onClick={() => send(item.prompt)}
+              disabled={streaming}
+              className="flex-shrink-0 rounded-lg px-2.5 py-1 text-[11px] font-semibold text-[#536D84] transition-all hover:bg-white/[0.05] hover:text-[#8BA4BC] disabled:opacity-40"
+              style={{ border: '1px solid rgba(255,255,255,0.06)' }}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* ── Error/retry bar ── */}
       {lastFailedPrompt && !streaming && (
         <div className="flex flex-wrap items-center gap-2 border-t border-[#F5A623]/20 bg-[#F5A623]/[0.07] px-4 py-2">
           <AlertCircle size={12} className="text-[#F5A623]" />
-          <span className="text-[12px] text-[#D4A84B]">Stream failed</span>
+          <span className="text-[12px] text-[#D4A84B]">Coach connection paused</span>
           <button onClick={() => send(lastFailedPrompt)}
             className="rounded-md border border-[#F5A623]/25 bg-[#F5A623]/[0.10] px-2.5 py-1 text-[11px] font-semibold text-[#F5A623] transition-colors hover:bg-[#F5A623]/20">
             Retry

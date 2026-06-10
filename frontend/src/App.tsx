@@ -1131,16 +1131,36 @@ function LearningPathContent({
     : !quizComplete
       ? 'Pass the tutorial quiz first'
       : 'Ready for practice';
+  const coachSeedMessages = [
+    {
+      id: `${selectedVideo.id}-seed-1`,
+      role: 'assistant' as const,
+      content: [
+        `This tutorial is about **${selectedContent.skillFocus}**.`,
+        '',
+        selectedVideo.shortExplanation,
+        '',
+        'Ask me for a shorter explanation, a tiny example, or one Socratic question when you get stuck.',
+      ].join('\n'),
+    },
+  ];
 
   const handleMarkVideo = (videoId: string) => {
     setPathProgress(current => markVideoWatched(current, selectedNode.nodeId, videoId));
-    toast.success('Video marked as watched.');
+    setLessonPanel('quiz');
+    toast.success('Tutorial marked. Now pass the quiz to unlock practice.');
   };
 
   const handleAnswerQuiz = (questionId: string, selectedIndex: number, correctIndex: number) => {
     const correct = selectedIndex === correctIndex;
     setPathProgress(current => scoreExercise(current, selectedNode.nodeId, questionId, correct ? 100 : 30));
-    if (correct) toast.success('Correct.');
+    const willPassAll = correct && selectedVideo.quiz.every(question => (
+      question.id === questionId
+        ? true
+        : (nodeProgress.exerciseAttempts[question.id]?.score ?? 0) >= 80
+    ));
+    if (correct && willPassAll) toast.success('Quiz passed. Practice is unlocked.');
+    else if (correct) toast.success('Correct.');
     else toast('Not yet. Ask the coach or try again.');
   };
 
@@ -1376,7 +1396,6 @@ function LearningPathContent({
                   <button
                     onClick={() => {
                       setLessonPanel('coach');
-                      sendPathCoachPrompt('Explain this tutorial in 4 short bullets for a beginner.');
                     }}
                     className="rounded-lg border border-app-border bg-bg-1 px-3 py-2 text-[12px] font-semibold text-ink transition-colors hover:border-info/40 hover:text-info"
                   >
@@ -1447,15 +1466,24 @@ function LearningPathContent({
 
             {lessonPanel === 'coach' && (
               <div className="flex min-h-0 flex-1 flex-col p-3">
-                <div className="mb-2 grid flex-shrink-0 gap-2">
-                  <button onClick={() => sendPathCoachPrompt('Explain this tutorial in 4 short bullets for a beginner.')} className="rounded-lg border border-app-border bg-bg-1 px-3 py-2 text-left text-[12px] font-semibold text-ink transition-colors hover:border-info/40 hover:text-info">Explain shortly</button>
-                  <button onClick={() => sendPathCoachPrompt('Ask me one Socratic question to check whether I understood the tutorial.')} className="rounded-lg border border-app-border bg-bg-1 px-3 py-2 text-left text-[12px] font-semibold text-ink transition-colors hover:border-info/40 hover:text-info">Test my understanding</button>
+                <div className="mb-2 flex-shrink-0 rounded-xl border border-app-border bg-bg-1 p-3">
+                  <p className="text-[12px] font-semibold text-ink">Coach for this tutorial</p>
+                  <p className="mt-1.5 text-[12px] leading-5 text-ink-muted">
+                    Use this only when the video or quiz feels unclear. Practice stays locked until the tutorial is marked watched and the quiz is passed.
+                  </p>
+                </div>
+                <div className="mb-2 grid flex-shrink-0 grid-cols-2 gap-2">
+                  <button onClick={() => sendPathCoachPrompt('Explain this tutorial in 4 short bullets for a beginner.')} className="rounded-lg border border-app-border bg-bg-1 px-3 py-2 text-left text-[12px] font-semibold text-ink transition-colors hover:border-info/40 hover:text-info">Short explain</button>
+                  <button onClick={() => sendPathCoachPrompt('Ask me one Socratic question to check whether I understood the tutorial.')} className="rounded-lg border border-app-border bg-bg-1 px-3 py-2 text-left text-[12px] font-semibold text-ink transition-colors hover:border-info/40 hover:text-info">Check me</button>
                 </div>
                 <div className="min-h-0 flex-1">
                   <ChatWindow
-                    sessionId={`${tutorSessionId}_path_${selectedNode.nodeId}`}
+                    sessionId={`${tutorSessionId}_path_${selectedNode.nodeId}_${selectedVideo.id}`}
                     queuedPrompt={pathCoachPrompt}
                     onQueuedPromptSent={() => setPathCoachPrompt('')}
+                    compact
+                    initialMessages={coachSeedMessages}
+                    showQuickPrompts={false}
                   />
                 </div>
               </div>
