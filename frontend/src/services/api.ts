@@ -2,6 +2,9 @@ import axios, { type AxiosError, type AxiosRequestConfig, type InternalAxiosRequ
 import type { LearningState } from './learningEngine';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:9090/api/v1';
+const API_TIMEOUT_MS = 60000;
+const AUTH_TIMEOUT_MS = 90000;
+const LOGOUT_TIMEOUT_MS = 5000;
 const ACCESS_TOKEN_KEY  = 'codequest_access_token';
 const REFRESH_TOKEN_KEY = 'codequest_refresh_token';
 // Old single-token key (pre-V12). Cleared on first load so legacy users re-auth cleanly.
@@ -10,7 +13,7 @@ if (typeof localStorage !== 'undefined') localStorage.removeItem(LEGACY_TOKEN_KE
 
 const api = axios.create({
   baseURL: API_BASE,
-  timeout: 15000,
+  timeout: API_TIMEOUT_MS,
 });
 
 // Separate instance for AI-backed calls that can take 60–120 s (Ollama)
@@ -74,7 +77,8 @@ aiApi.interceptors.request.use(attachToken);
 
 let refreshInFlight: Promise<string> | null = null;
 // Use a bare axios instance to avoid recursing into our own interceptor.
-const refreshAxios = axios.create({ baseURL: API_BASE, timeout: 15000 });
+const authApi = axios.create({ baseURL: API_BASE, timeout: AUTH_TIMEOUT_MS });
+const refreshAxios = axios.create({ baseURL: API_BASE, timeout: API_TIMEOUT_MS });
 
 const doRefresh = async (): Promise<string> => {
   const refreshToken = getRefreshToken();
@@ -499,11 +503,14 @@ export const normalizeAppError = (error: unknown): AppError => {
   if (axios.isAxiosError(error)) {
     const status = error.response?.status;
     const apiMessage = error.response?.data?.error?.message;
+    const timeoutMessage = error.code === 'ECONNABORTED' || error.message.toLowerCase().includes('timeout')
+      ? 'The server is still waking up. Please wait a moment and try again.'
+      : '';
     return {
       name: 'AppError',
       message: typeof apiMessage === 'string' && apiMessage.trim()
         ? apiMessage
-        : error.message || 'Request failed',
+        : timeoutMessage || error.message || 'Request failed',
       category: categoryFromStatus(status),
       status,
     };
@@ -546,12 +553,12 @@ export const registerPlayer = async (data: {
   username: string; email: string; password: string;
   programmingLanguage: string; level: PlayerLevel;
 }): Promise<AuthResult> => {
-  const res = await api.post('/players', data);
+  const res = await authApi.post('/players', data);
   return storeAuth(unwrap(res.data) as AuthResult);
 };
 
 export const loginPlayer = async (identifier: string, password?: string): Promise<AuthResult> => {
-  const res = await api.post('/players/login', { identifier, password: password || undefined });
+  const res = await authApi.post('/players/login', { identifier, password: password || undefined });
   return storeAuth(unwrap(res.data) as AuthResult);
 };
 
@@ -560,7 +567,7 @@ export const logout = async (): Promise<void> => {
   setTokens(null);
   // Best-effort — if the server is unreachable we already cleared local state.
   if (refreshToken) {
-    try { await axios.post(`${API_BASE}/auth/logout`, { refreshToken }); } catch { /* ignore */ }
+    try { await axios.post(`${API_BASE}/auth/logout`, { refreshToken }, { timeout: LOGOUT_TIMEOUT_MS }); } catch { /* ignore */ }
   }
 };
 
