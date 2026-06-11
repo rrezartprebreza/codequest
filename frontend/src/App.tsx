@@ -1156,6 +1156,13 @@ function LearningPathContent({
       : !lessonCheckpointSaved
         ? 'Save the quiz result first'
         : 'Ready for practice';
+  const visibleLessonPanel = !selectedVideoWatched && lessonPanel !== 'info' ? 'info' : lessonPanel;
+  const understandingDone = selectedVideoWatched && (visibleLessonPanel === 'quiz' || answeredQuizCount > 0 || quizComplete);
+  const lessonPanelOptions = [
+    { id: 'info' as const, label: 'Watch', disabled: false },
+    { id: 'coach' as const, label: 'Understand', disabled: !selectedVideoWatched },
+    { id: 'quiz' as const, label: 'Quiz', disabled: !selectedVideoWatched },
+  ];
   const lessonSteps = [
     {
       id: 'watch',
@@ -1167,16 +1174,16 @@ function LearningPathContent({
     {
       id: 'summary',
       title: 'Understand',
-      text: 'Read the short explanation and key ideas before the check.',
-      done: selectedVideoWatched,
-      active: selectedVideoWatched && !quizComplete,
+      text: selectedVideoWatched ? 'Use the short explanation or AI coach before the quiz.' : 'Unlocks after the tutorial is watched.',
+      done: understandingDone,
+      active: selectedVideoWatched && !quizComplete && visibleLessonPanel === 'coach',
     },
     {
       id: 'quiz',
       title: 'Quiz',
       text: quizComplete ? 'Quick check passed.' : `${passedQuizCount}/${selectedVideo.quiz.length} correct so far.`,
       done: quizComplete,
-      active: selectedVideoWatched && !quizComplete,
+      active: selectedVideoWatched && !quizComplete && visibleLessonPanel === 'quiz',
     },
     {
       id: 'practice',
@@ -1202,8 +1209,8 @@ function LearningPathContent({
 
   const handleMarkVideo = (videoId: string) => {
     setPathProgress(current => markVideoWatched(current, selectedNode.nodeId, videoId));
-    setLessonPanel('quiz');
-    toast.success('Tutorial marked. Now pass the quiz to unlock practice.');
+    setLessonPanel('coach');
+    toast.success('Tutorial marked. Understand the key idea, then pass the quiz.');
   };
 
   const handleAnswerQuiz = (questionId: string, selectedIndex: number, correctIndex: number) => {
@@ -1421,29 +1428,38 @@ function LearningPathContent({
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <p className="eyebrow">Curriculum</p>
-                  <h3 className="mt-1 text-[14px] font-semibold text-ink">{lessonPanel === 'coach' ? 'AI help' : lessonPanel === 'quiz' ? 'Tutorial quiz' : 'Video summary'}</h3>
+                  <h3 className="mt-1 text-[14px] font-semibold text-ink">{visibleLessonPanel === 'coach' ? 'Understand' : visibleLessonPanel === 'quiz' ? 'Tutorial quiz' : 'Video summary'}</h3>
                 </div>
                 <span className={`tag ${canPracticeSelectedVideo ? 'text-accent' : ''}`}>{gateLabel}</span>
               </div>
               <div className="mt-3 grid grid-cols-3 gap-1.5 rounded-lg bg-bg-0 p-1">
-                {(['info', 'quiz', 'coach'] as const).map(panel => (
+                {lessonPanelOptions.map(panel => (
                   <button
-                    key={panel}
-                    onClick={() => setLessonPanel(panel)}
-                    className={`inline-flex items-center justify-center gap-1.5 rounded-md border px-2 py-1.5 text-[11px] font-semibold capitalize transition-colors ${
-                      lessonPanel === panel
+                    key={panel.id}
+                    onClick={() => {
+                      if (panel.disabled) {
+                        toast('Watch and mark the tutorial before this step.');
+                        return;
+                      }
+                      setLessonPanel(panel.id);
+                    }}
+                    aria-disabled={panel.disabled}
+                    className={`inline-flex items-center justify-center gap-1.5 rounded-md border px-2 py-1.5 text-[11px] font-semibold transition-colors ${
+                      visibleLessonPanel === panel.id
                         ? 'border-accent/40 bg-accent/10 text-accent'
-                        : 'border-transparent bg-transparent text-ink-muted hover:bg-bg-2 hover:text-ink'
+                        : panel.disabled
+                          ? 'cursor-not-allowed border-transparent bg-transparent text-ink-subtle opacity-55'
+                          : 'border-transparent bg-transparent text-ink-muted hover:bg-bg-2 hover:text-ink'
                     }`}
                   >
-                    {panel === 'coach' ? <Brain size={12} /> : panel === 'info' ? <BookOpen size={12} /> : <Target size={12} />}
-                    {panel === 'coach' ? 'help' : panel === 'info' ? 'summary' : panel}
+                    {panel.id === 'coach' ? <Brain size={12} /> : panel.id === 'info' ? <BookOpen size={12} /> : <Target size={12} />}
+                    {panel.label}
                   </button>
                 ))}
               </div>
             </div>
 
-            {lessonPanel === 'info' && (
+            {visibleLessonPanel === 'info' && (
               <div className="min-h-0 flex-1 overflow-y-auto p-4">
                 <div className="rounded-xl border border-app-border bg-bg-1">
                   <div className="flex items-center justify-between border-b border-app-border px-4 py-3">
@@ -1491,11 +1507,22 @@ function LearningPathContent({
                     <span className="mt-1 block text-[10px] font-semibold uppercase tracking-[0.12em]">Quiz</span>
                   </button>
                   <button
-                    onClick={() => setLessonPanel('coach')}
-                    className="rounded-lg border border-app-border bg-bg-1 px-2 py-3 text-center text-ink-muted transition-colors hover:border-info/40 hover:text-info"
+                    onClick={() => {
+                      if (!selectedVideoWatched) {
+                        toast('Mark the tutorial as watched before using AI help.');
+                        return;
+                      }
+                      setLessonPanel('coach');
+                    }}
+                    aria-disabled={!selectedVideoWatched}
+                    className={`rounded-lg border px-2 py-3 text-center transition-colors ${
+                      selectedVideoWatched
+                        ? 'border-app-border bg-bg-1 text-ink-muted hover:border-info/40 hover:text-info'
+                        : 'cursor-not-allowed border-app-border bg-bg-1 text-ink-subtle opacity-55'
+                    }`}
                   >
                     <Brain size={15} className="mx-auto" />
-                    <span className="mt-1 block text-[10px] font-semibold uppercase tracking-[0.12em]">Help</span>
+                    <span className="mt-1 block text-[10px] font-semibold uppercase tracking-[0.12em]">Understand</span>
                   </button>
                   <button
                     onClick={handleStartPractice}
@@ -1541,8 +1568,18 @@ function LearningPathContent({
                     {selectedVideoWatched ? 'Tutorial watched' : 'Mark tutorial watched'}
                   </button>
                   <button
-                    onClick={() => setLessonPanel('quiz')}
-                    className="rounded-lg border border-danger/40 bg-danger/10 px-3 py-2 text-[12px] font-semibold text-danger transition-colors hover:bg-danger/15"
+                    onClick={() => {
+                      if (!selectedVideoWatched) {
+                        toast('Mark the tutorial as watched before taking the quiz.');
+                        return;
+                      }
+                      setLessonPanel('quiz');
+                    }}
+                    className={`rounded-lg border px-3 py-2 text-[12px] font-semibold transition-colors ${
+                      selectedVideoWatched
+                        ? 'border-danger/40 bg-danger/10 text-danger hover:bg-danger/15'
+                        : 'cursor-not-allowed border-app-border bg-bg-1 text-ink-subtle'
+                    }`}
                   >
                     Take quiz
                   </button>
@@ -1550,7 +1587,7 @@ function LearningPathContent({
               </div>
             )}
 
-            {lessonPanel === 'quiz' && (
+            {visibleLessonPanel === 'quiz' && (
               <div className="min-h-0 flex-1 overflow-y-auto p-4">
                 <div className="mb-3 rounded-xl border border-app-border bg-bg-1 p-3">
                   <p className="text-[12px] font-semibold text-ink">{answeredQuizCount}/{selectedVideo.quiz.length} answered · {passedQuizCount}/{selectedVideo.quiz.length} correct</p>
@@ -1632,12 +1669,12 @@ function LearningPathContent({
               </div>
             )}
 
-            {lessonPanel === 'coach' && (
+            {visibleLessonPanel === 'coach' && (
               <div className="flex min-h-[480px] flex-1 flex-col p-3 lg:min-h-0">
                 <div className="mb-2 flex-shrink-0 rounded-xl border border-app-border bg-bg-1 p-3">
-                  <p className="text-[12px] font-semibold text-ink">AI help for this tutorial</p>
+                  <p className="text-[12px] font-semibold text-ink">Understand this tutorial</p>
                   <p className="mt-1.5 text-[12px] leading-5 text-ink-muted">
-                    Use AI only when the video or quiz feels unclear. If AI is unavailable, the summary and quiz still work.
+                    Read the short explanation, then ask the coach only for clarification before the quiz.
                   </p>
                 </div>
                 <div className="mb-2 grid flex-shrink-0 grid-cols-2 gap-2">
