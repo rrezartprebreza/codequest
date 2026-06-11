@@ -3,8 +3,10 @@ import type { LearningState } from './learningEngine';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:9090/api/v1';
 const API_TIMEOUT_MS = 60000;
-const AUTH_TIMEOUT_MS = 90000;
+const AUTH_TIMEOUT_MS = 240000;
+const BACKEND_WARMUP_TIMEOUT_MS = 240000;
 const LOGOUT_TIMEOUT_MS = 5000;
+const API_ORIGIN = API_BASE.replace(/\/api\/v1\/?$/, '');
 const ACCESS_TOKEN_KEY  = 'codequest_access_token';
 const REFRESH_TOKEN_KEY = 'codequest_refresh_token';
 // Old single-token key (pre-V12). Cleared on first load so legacy users re-auth cleanly.
@@ -79,6 +81,24 @@ let refreshInFlight: Promise<string> | null = null;
 // Use a bare axios instance to avoid recursing into our own interceptor.
 const authApi = axios.create({ baseURL: API_BASE, timeout: AUTH_TIMEOUT_MS });
 const refreshAxios = axios.create({ baseURL: API_BASE, timeout: API_TIMEOUT_MS });
+
+const warmBackend = async (): Promise<void> => {
+  if (typeof fetch === 'undefined') return;
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), BACKEND_WARMUP_TIMEOUT_MS);
+
+  try {
+    await fetch(`${API_ORIGIN}/`, {
+      method: 'GET',
+      cache: 'no-store',
+      signal: controller.signal,
+    });
+  } catch {
+    // Continue to the real auth request so the app can surface the actual API error.
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+};
 
 const doRefresh = async (): Promise<string> => {
   const refreshToken = getRefreshToken();
@@ -553,11 +573,13 @@ export const registerPlayer = async (data: {
   username: string; email: string; password: string;
   programmingLanguage: string; level: PlayerLevel;
 }): Promise<AuthResult> => {
+  await warmBackend();
   const res = await authApi.post('/players', data);
   return storeAuth(unwrap(res.data) as AuthResult);
 };
 
 export const loginPlayer = async (identifier: string, password?: string): Promise<AuthResult> => {
+  await warmBackend();
   const res = await authApi.post('/players/login', { identifier, password: password || undefined });
   return storeAuth(unwrap(res.data) as AuthResult);
 };
